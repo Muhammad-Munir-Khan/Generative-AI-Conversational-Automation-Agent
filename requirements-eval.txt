@@ -1,0 +1,4 @@
+# Install on top of requirements.txt only when running evals.
+ragas==0.2.6
+datasets==3.0.2
+pytest==8.3.3
