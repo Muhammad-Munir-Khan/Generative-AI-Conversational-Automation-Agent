@@ -1,11 +1,40 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { Cloud } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { ThemeToggleIcon } from "@/components/ThemeToggleIcon";
 import { AuthError } from "@/lib/auth";
+
+/* --------------- Inline Wordmark (matches landing page) ------------------- */
+
+function Wordmark() {
+  return (
+    <div className="inline-flex items-baseline gap-1.5">
+      <Cloud
+        className="w-5 h-5 text-[var(--accent)] self-center"
+        strokeWidth={2.25}
+      />
+      <span
+        className="text-xl font-bold bg-clip-text text-transparent tracking-tight"
+        style={{
+          backgroundImage:
+            "linear-gradient(135deg, var(--accent-bright), var(--accent))",
+        }}
+      >
+        CloudNest
+      </span>
+      <span className="text-sm font-mono text-[var(--fg-tertiary)] opacity-70 -ml-1">
+        .ai
+      </span>
+    </div>
+  );
+}
+
+/* ---------------------------- Signup Page -------------------------------- */
 
 export default function SignupPage() {
   const router = useRouter();
@@ -53,110 +82,150 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 bg-[var(--bg-base)]">
-      <div className="w-full max-w-sm">
+    <div className="min-h-screen relative overflow-hidden bg-[var(--bg-base)] flex items-center justify-center px-4 py-12">
+      {/* Theme toggle in top-right corner */}
+      <div className="absolute top-5 right-5 z-10">
+        <ThemeToggleIcon />
+      </div>
+
+      {/* Ambient gradient orb behind the form */}
+      <div
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] rounded-full opacity-20 blur-3xl pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(circle, var(--accent-bright) 0%, transparent 65%)",
+        }}
+      />
+
+      {/* Subtle grid overlay */}
+      <div
+        className="absolute inset-0 opacity-[0.025] pointer-events-none"
+        style={{
+          backgroundImage:
+            "linear-gradient(var(--fg-primary) 1px, transparent 1px), linear-gradient(90deg, var(--fg-primary) 1px, transparent 1px)",
+          backgroundSize: "48px 48px",
+        }}
+      />
+
+      <div className="relative w-full max-w-md">
+        {/* Wordmark header */}
         <div className="mb-8 text-center">
-          <div
-            className="font-bold text-2xl bg-clip-text text-transparent tracking-tight"
-            style={{
-              backgroundImage:
-                "linear-gradient(135deg, var(--accent-bright), var(--accent))",
-            }}
-          >
-            ◆ Get started
-          </div>
-          <div className="text-xs text-[var(--fg-tertiary)] font-mono uppercase tracking-wider mt-2">
-            create your account
-          </div>
+          <Link href="/" aria-label="CloudNest home" className="inline-block">
+            <Wordmark />
+          </Link>
+          <h1 className="mt-6 text-2xl font-bold tracking-tight text-[var(--fg-primary)]">
+            Create your workspace
+          </h1>
+          <p className="mt-1.5 text-sm text-[var(--fg-secondary)]">
+            Your private AI platform &mdash; documents, sessions, and data are yours alone.
+          </p>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-lg p-6 space-y-4"
-        >
-          <label className="block">
-            <span className="text-xs font-medium text-[var(--fg-secondary)] mb-1.5 block">
-              Email
-            </span>
-            <input
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-md text-[var(--fg-primary)] focus:border-[var(--accent)] focus:outline-none transition"
-              placeholder="you@example.com"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-xs font-medium text-[var(--fg-secondary)] mb-1.5 block">
-              Display name <span className="text-[var(--fg-muted)]">(optional)</span>
-            </span>
-            <input
-              type="text"
-              autoComplete="name"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-md text-[var(--fg-primary)] focus:border-[var(--accent)] focus:outline-none transition"
-              placeholder="Munir"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-xs font-medium text-[var(--fg-secondary)] mb-1.5 block">
-              Password
-            </span>
-            <input
-              type="password"
-              autoComplete="new-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-md text-[var(--fg-primary)] focus:border-[var(--accent)] focus:outline-none transition"
-              placeholder="at least 8 characters"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-xs font-medium text-[var(--fg-secondary)] mb-1.5 block">
-              Confirm password
-            </span>
-            <input
-              type="password"
-              autoComplete="new-password"
-              required
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-md text-[var(--fg-primary)] focus:border-[var(--accent)] focus:outline-none transition"
-              placeholder="••••••••"
-            />
-          </label>
-
-          {error && (
-            <div className="text-xs text-red-500 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={submitting || !email || !password || !confirm}
-            className="w-full py-2 rounded-md bg-[var(--accent)] text-white text-sm font-medium hover:bg-[var(--accent-bright)] transition disabled:opacity-50 disabled:cursor-not-allowed"
+        {/* Form card with subtle glow */}
+        <div className="relative">
+          <div
+            className="absolute inset-0 rounded-2xl opacity-30 blur-xl pointer-events-none"
+            style={{
+              background:
+                "linear-gradient(135deg, var(--accent-bright), var(--accent))",
+            }}
+          />
+          <form
+            onSubmit={handleSubmit}
+            className="relative bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl p-7 space-y-5 shadow-2xl"
           >
-            {submitting ? "Creating account..." : "Create account"}
-          </button>
+            <label className="block">
+              <span className="text-xs font-medium text-[var(--fg-secondary)] mb-2 block uppercase tracking-wider">
+                Email
+              </span>
+              <input
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-3.5 py-2.5 text-sm bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-lg text-[var(--fg-primary)] placeholder-[var(--fg-muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20 focus:outline-none transition-all"
+                placeholder="you@example.com"
+              />
+            </label>
 
-          <div className="text-center text-xs text-[var(--fg-tertiary)] pt-2">
-            Already have an account?{" "}
-            <Link
-              href="/login"
-              className="text-[var(--accent)] hover:underline"
+            <label className="block">
+              <span className="text-xs font-medium text-[var(--fg-secondary)] mb-2 block uppercase tracking-wider">
+                Display name{" "}
+                <span className="text-[var(--fg-muted)] normal-case font-normal tracking-normal">
+                  (optional)
+                </span>
+              </span>
+              <input
+                type="text"
+                autoComplete="name"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="w-full px-3.5 py-2.5 text-sm bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-lg text-[var(--fg-primary)] placeholder-[var(--fg-muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20 focus:outline-none transition-all"
+                placeholder="Munir"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-xs font-medium text-[var(--fg-secondary)] mb-2 block uppercase tracking-wider">
+                Password
+              </span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-3.5 py-2.5 text-sm bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-lg text-[var(--fg-primary)] placeholder-[var(--fg-muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20 focus:outline-none transition-all"
+                placeholder="at least 8 characters"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-xs font-medium text-[var(--fg-secondary)] mb-2 block uppercase tracking-wider">
+                Confirm password
+              </span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                required
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                className="w-full px-3.5 py-2.5 text-sm bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-lg text-[var(--fg-primary)] placeholder-[var(--fg-muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]/20 focus:outline-none transition-all"
+                placeholder="********"
+              />
+            </label>
+
+            {error && (
+              <div className="text-xs text-red-500 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2.5">
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={submitting || !email || !password || !confirm}
+              className="w-full py-2.5 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-bright)] text-white text-sm font-medium transition-all shadow-lg shadow-[var(--accent)]/20 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
             >
-              Sign in
-            </Link>
-          </div>
-        </form>
+              {submitting ? "Creating account..." : "Create account"}
+            </button>
+
+            <div className="text-center text-xs text-[var(--fg-tertiary)] pt-1">
+              Already have an account?{" "}
+              <Link
+                href="/login"
+                className="text-[var(--accent)] hover:text-[var(--accent-bright)] font-medium transition"
+              >
+                Sign in
+              </Link>
+            </div>
+          </form>
+        </div>
+
+        {/* Tiny footer signal */}
+        <div className="mt-6 text-center text-[0.65rem] font-mono uppercase tracking-wider text-[var(--fg-muted)]">
+          private workspace &middot; per-user rag &middot; isolated by default
+        </div>
       </div>
     </div>
   );
