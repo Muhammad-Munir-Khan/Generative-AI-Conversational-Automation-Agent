@@ -8,6 +8,7 @@ import { useState, type FormEvent } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { ThemeToggleIcon } from "@/components/ThemeToggleIcon";
 import { AuthError } from "@/lib/auth";
+import { OAuthButtons } from "@/components/OAuthButtons";
 
 /* --------------- Inline Wordmark (matches landing page) ------------------- */
 
@@ -122,7 +123,7 @@ export default function LoginPage() {
           <form
             onSubmit={handleSubmit}
             className="relative bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl p-7 space-y-5 shadow-2xl"
-          >
+          > <OAuthButtons />
             <label className="block">
               <span className="text-xs font-medium text-[var(--fg-secondary)] mb-2 block uppercase tracking-wider">
                 Email

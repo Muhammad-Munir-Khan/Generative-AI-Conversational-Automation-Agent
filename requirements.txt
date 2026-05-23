@@ -54,3 +54,4 @@ alembic>=1.13,<2.0
 psycopg[binary]>=3.1,<4.0
 
 langchain-openai
+httpx-oauth==0.13.2

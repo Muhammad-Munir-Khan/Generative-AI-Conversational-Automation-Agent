@@ -79,6 +79,18 @@ class Settings(BaseSettings):
     enable_python_repl: bool = True
     web_search_max_results: int = 4
 
+    # --- OAuth providers ---
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    github_oauth_client_id: str = ""
+    github_oauth_client_secret: str = ""
+
+    # --- Frontend + backend URLs for OAuth redirect flow ---
+    # frontend_url: where we send the browser AFTER successful OAuth login
+    # backend_url: the OAuth callback target Google/GitHub redirect back to
+    frontend_url: str = "http://localhost:3000"
+    backend_url: str = "http://localhost:8000"
+
     # --- Multi-LLM ensemble ---
     # Two model lists — one for each provider that supports ensemble mode.
     # The active list is selected automatically based on LLM_PROVIDER.

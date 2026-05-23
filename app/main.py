@@ -1,10 +1,23 @@
 """FastAPI application entry point."""
-from fastapi import FastAPI
+import jwt as pyjwt
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi_users.jwt import decode_jwt
+from fastapi_users.router.oauth import generate_state_token
+from httpx_oauth.integrations.fastapi import OAuth2AuthorizeCallback
 
 from app import __version__
 from app.api import agent_routes, attachment_routes, rag_routes, voice_routes
-from app.core.auth import cookie_backend, fastapi_users, jwt_backend
+from app.core.auth import (
+    cookie_backend,
+    current_active_user,
+    fastapi_users,
+    get_user_manager,
+    github_oauth_client,
+    google_oauth_client,
+    jwt_backend,
+)
 from app.core.config import settings
 from app.core.llm import active_model_name, active_provider
 from app.core.logging import configure_logging
@@ -36,10 +49,10 @@ app.include_router(attachment_routes.router)
 
 # --- Auth routes -------------------------------------------------------------
 # Two login backends mounted under different prefixes:
-#   POST /auth/jwt/login     → returns {access_token, token_type} JSON (for API/curl)
-#   POST /auth/cookie/login  → sets httpOnly cookie, returns 204 No Content (for browser)
-#   POST /auth/jwt/logout    → no-op (JWT is stateless)
-#   POST /auth/cookie/logout → clears the cookie
+#   POST /auth/jwt/login     -> returns {access_token, token_type} JSON (for API/curl)
+#   POST /auth/cookie/login  -> sets httpOnly cookie, returns 204 No Content (for browser)
+#   POST /auth/jwt/logout    -> no-op (JWT is stateless)
+#   POST /auth/cookie/logout -> clears the cookie
 app.include_router(
     fastapi_users.get_auth_router(jwt_backend),
     prefix="/auth/jwt",
@@ -65,6 +78,150 @@ app.include_router(
     prefix="/auth",
     tags=["auth"],
 )
+
+# =============================================================================
+# OAuth (Google + GitHub) with post-login redirect to the frontend.
+#
+# fastapi-users 14's get_oauth_router callback returns 204 No Content, which
+# strands the browser on the backend after the provider redirects back. OAuth
+# is a full-page redirect flow, so we need the callback to:
+#   1. Exchange the code for an access token (httpx-oauth)
+#   2. Get/create/link the user (fastapi-users user_manager.oauth_callback)
+#   3. Set the httpOnly auth cookie (cookie_backend's strategy + transport)
+#   4. 302-redirect the browser to the frontend /chat page
+#
+# We reuse fastapi-users' own components (no reimplementation of OAuth or JWT
+# logic) so the security guarantees match the built-in router exactly:
+#   - CSRF state token is generated + verified (generate_state_token/decode_jwt)
+#   - User get/create/link handled by user_manager.oauth_callback
+#   - Cookie issued by the same cookie_backend strategy + transport as
+#     POST /auth/cookie/login, with identical attributes
+# =============================================================================
+
+_OAUTH_STATE_AUDIENCE = "fastapi-users:oauth-state"
+
+_oauth_clients = {
+    "google": google_oauth_client,
+    "github": github_oauth_client,
+}
+
+_oauth_callbacks = {
+    "google": OAuth2AuthorizeCallback(
+        google_oauth_client,
+        redirect_url=f"{settings.backend_url}/auth/google/callback",
+    ),
+    "github": OAuth2AuthorizeCallback(
+        github_oauth_client,
+        redirect_url=f"{settings.backend_url}/auth/github/callback",
+    ),
+}
+
+_oauth_scopes = {
+    "google": ["openid", "email", "profile"],
+    "github": ["user:email"],
+}
+
+
+async def _start_oauth(provider: str) -> dict:
+    """Build the provider authorization URL with a signed CSRF state token."""
+    client = _oauth_clients[provider]
+    state = generate_state_token({}, settings.jwt_secret)
+    url = await client.get_authorization_url(
+        f"{settings.backend_url}/auth/{provider}/callback",
+        state=state,
+        scope=_oauth_scopes[provider],
+    )
+    return {"authorization_url": url}
+
+
+async def _finish_oauth(provider, request, access_token_state, user_manager):
+    """Exchange code, get/create user, set cookie, redirect to frontend."""
+    token, state = access_token_state
+
+    # Verify the state token (CSRF protection) - same check the built-in does.
+    try:
+        decode_jwt(state, settings.jwt_secret, [_OAUTH_STATE_AUDIENCE])
+    except pyjwt.PyJWTError:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state token.")
+
+    client = _oauth_clients[provider]
+    account_id, account_email = await client.get_id_email(token["access_token"])
+
+    if account_email is None:
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth provider did not return an email address.",
+        )
+
+    user = await user_manager.oauth_callback(
+        provider,
+        token["access_token"],
+        account_id,
+        account_email,
+        token.get("expires_at"),
+        token.get("refresh_token"),
+        request,
+        associate_by_email=True,
+        is_verified_by_default=True,
+    )
+
+    if not user.is_active:
+        raise HTTPException(status_code=400, detail="User account is inactive.")
+
+    # Issue the auth cookie via the cookie backend's strategy, attached to a
+    # redirect to the frontend. Cookie attributes are read from the transport
+    # so they match POST /auth/cookie/login exactly.
+    redirect = RedirectResponse(url=f"{settings.frontend_url}/chat", status_code=302)
+    strategy = cookie_backend.get_strategy()
+    auth_token = await strategy.write_token(user)
+
+    transport = cookie_backend.transport
+    redirect.set_cookie(
+        key=transport.cookie_name,
+        value=auth_token,
+        max_age=transport.cookie_max_age,
+        path=transport.cookie_path,
+        domain=transport.cookie_domain,
+        secure=transport.cookie_secure,
+        httponly=transport.cookie_httponly,
+        samesite=transport.cookie_samesite,
+    )
+    return redirect
+
+
+# --- Google ---
+
+@app.get("/auth/google/authorize", tags=["auth"])
+async def google_authorize() -> dict:
+    return await _start_oauth("google")
+
+
+@app.get("/auth/google/callback", tags=["auth"])
+async def google_callback(
+    request: Request,
+    access_token_state=Depends(_oauth_callbacks["google"]),
+    user_manager=Depends(get_user_manager),
+):
+    return await _finish_oauth("google", request, access_token_state, user_manager)
+
+
+# --- GitHub ---
+
+@app.get("/auth/github/authorize", tags=["auth"])
+async def github_authorize() -> dict:
+    return await _start_oauth("github")
+
+
+@app.get("/auth/github/callback", tags=["auth"])
+async def github_callback(
+    request: Request,
+    access_token_state=Depends(_oauth_callbacks["github"]),
+    user_manager=Depends(get_user_manager),
+):
+    return await _finish_oauth("github", request, access_token_state, user_manager)
+
+
+# --- User management routes --------------------------------------------------
 app.include_router(
     fastapi_users.get_users_router(UserRead, UserUpdate),
     prefix="/users",
@@ -99,6 +256,8 @@ def root():
             "login_bearer": "POST /auth/jwt/login (for API/curl, returns token JSON)",
             "login_cookie": "POST /auth/cookie/login (for browser, sets httpOnly cookie)",
             "logout_cookie": "POST /auth/cookie/logout",
+            "oauth_google": "GET /auth/google/authorize",
+            "oauth_github": "GET /auth/github/authorize",
             "me": "GET /users/me",
             "documents": "GET/POST/DELETE /rag/documents",
             "rag_query": "POST /rag/query",

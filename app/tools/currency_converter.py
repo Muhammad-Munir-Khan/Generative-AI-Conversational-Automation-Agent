@@ -4,6 +4,8 @@ from functools import lru_cache
 import requests
 from langchain_core.tools import tool
 
+from app.tools._coercion import CoercionError, coerce_numeric
+
 API_BASE = "https://api.frankfurter.app"
 
 
@@ -32,29 +34,21 @@ def currency_converter(
     Rates update once per business day.
 
     Args:
-        amount: The numeric amount to convert. Accepted as a number OR a
-            string of digits (some LLMs occasionally quote numeric arguments).
+        amount: The numeric amount to convert. Accepted as a number, a
+            numeric string ("36000", "36,000"), or a math expression
+            string ("0.15 * 240000") - smaller models sometimes pass
+            expressions instead of pre-computed numbers.
         from_currency: 3-letter currency code (e.g. "USD").
         to_currency: 3-letter currency code (e.g. "EUR").
 
     Returns:
         A formatted result like "100 USD = 92.35 EUR (rate: 0.9235)".
     """
-    # Defensive coercion: smaller LLMs (e.g. gpt-oss-20b) sometimes serialize
-    # numeric tool arguments as strings ("2100000" instead of 2100000), which
-    # Groq's strict schema validation rejects. We declare the parameter as
-    # `float | int | str` so the schema accepts both, then coerce here.
-    if isinstance(amount, str):
-        # Strip thousands separators and whitespace the LLM might have added.
-        cleaned = amount.replace(",", "").replace("_", "").strip()
-        try:
-            amount = float(cleaned)
-        except ValueError:
-            return f"Error: amount {amount!r} is not a valid number."
-    elif not isinstance(amount, (int, float)):
-        return f"Error: amount must be a number, got {type(amount).__name__}."
-
-    amount = float(amount)
+    # Defensive coercion handles strings, math expressions, thousands separators.
+    try:
+        amount = coerce_numeric(amount)
+    except CoercionError as e:
+        return f"Error: {e}"
 
     src = from_currency.upper().strip()
     dst = to_currency.upper().strip()
