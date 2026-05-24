@@ -118,6 +118,14 @@ class Settings(BaseSettings):
     jwt_secret: str = "CHANGE_ME_IN_ENV"
     jwt_lifetime_seconds: int = 604800  # 7 days
 
+    # --- SMTP (email sending: password reset, verification) ---
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_from_name: str = "CloudNest.ai"
+
     @property
     def docs_dir(self) -> Path:
         return self.data_dir / "docs"

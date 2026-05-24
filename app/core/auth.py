@@ -6,7 +6,7 @@ Backends:
 Both share one JWT strategy. OAuth (Google + GitHub) issues the same cookie.
 """
 import uuid
-
+from datetime import datetime, timezone
 from fastapi import Depends
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import (
@@ -15,6 +15,7 @@ from fastapi_users.authentication import (
     CookieTransport,
     JWTStrategy,
 )
+from app.core.email import password_reset_email, send_email, password_changed_email
 from fastapi_users.db import SQLAlchemyUserDatabase
 from httpx_oauth.clients.github import GitHubOAuth2
 from httpx_oauth.clients.google import GoogleOAuth2
@@ -44,17 +45,26 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         log.info("user registered: %s (%s)", user.email, user.id)
 
     async def on_after_forgot_password(self, user: User, token: str, request=None):
-        log.info("password reset requested for %s - token: %s", user.email, token)
+        log.info("password reset requested for %s", user.email)
+        reset_link = f"{settings.frontend_url}/reset-password?token={token}"
+        subject, html_body, text_body = password_reset_email(reset_link)
+        await send_email(user.email, subject, html_body, text_body)
 
     async def on_after_request_verify(self, user: User, token: str, request=None):
-        log.info("email verification requested for %s - token: %s", user.email, token)
+        log.info("email verification requested for %s", user.email)
 
     async def on_after_login(self, user: User, request=None, response=None):
         log.info("user logged in: %s (%s)", user.email, user.id)
 
+    async def on_after_reset_password(self, user: User, request=None):
+        log.info("password changed for %s", user.email)
+        when = datetime.now(timezone.utc).strftime("%B %d, %Y at %H:%M UTC")
+        subject, html_body, text_body = password_changed_email(when)
+        await send_email(user.email, subject, html_body, text_body)
 
 async def get_user_manager(user_db=Depends(get_user_db)):
     yield UserManager(user_db)
+
 
 
 # --- Shared JWT strategy ---

@@ -133,7 +133,7 @@ export default function SignupPage() {
           <form
             onSubmit={handleSubmit}
             className="relative bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl p-7 space-y-5 shadow-2xl"
-          > <OAuthButtons />
+          >
             <label className="block">
               <span className="text-xs font-medium text-[var(--fg-secondary)] mb-2 block uppercase tracking-wider">
                 Email
@@ -209,7 +209,7 @@ export default function SignupPage() {
             >
               {submitting ? "Creating account..." : "Create account"}
             </button>
-
+            <OAuthButtons />
             <div className="text-center text-xs text-[var(--fg-tertiary)] pt-1">
               Already have an account?{" "}
               <Link

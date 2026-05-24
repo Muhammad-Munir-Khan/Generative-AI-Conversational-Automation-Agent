@@ -123,7 +123,7 @@ export default function LoginPage() {
           <form
             onSubmit={handleSubmit}
             className="relative bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl p-7 space-y-5 shadow-2xl"
-          > <OAuthButtons />
+          >
             <label className="block">
               <span className="text-xs font-medium text-[var(--fg-secondary)] mb-2 block uppercase tracking-wider">
                 Email
@@ -167,7 +167,15 @@ export default function LoginPage() {
             >
               {submitting ? "Signing in..." : "Sign in"}
             </button>
-
+            <div className="text-right -mt-2">
+              <Link
+                href="/forgot-password"
+                className="text-xs text-[var(--accent)] hover:text-[var(--accent-bright)] transition"
+              >
+                Forgot password?
+              </Link>
+            </div>
+            <OAuthButtons />
             <div className="text-center text-xs text-[var(--fg-tertiary)] pt-1">
               New here?{" "}
               <Link
@@ -177,6 +185,7 @@ export default function LoginPage() {
                 Create an account
               </Link>
             </div>
+
           </form>
         </div>
 
