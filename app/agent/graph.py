@@ -7,6 +7,11 @@ start of each agent run and reset at the end. This lets RAG tools
 (document_search, document_summarizer) and the underlying retrieval layer
 read the active user without us having to thread user_id through every
 LangChain call site.
+
+Observability: each agent run attaches a Langfuse callback handler (when
+configured) so the full trace - LLM calls, tool calls, latency, tokens,
+cost - is captured. If Langfuse isn't configured the handler is None and
+the run proceeds normally with no tracing.
 """
 import threading
 import time
@@ -31,6 +36,7 @@ from app.core.config import settings
 from app.core.language import language_directive
 from app.core.llm import get_llm
 from app.core.logging import get_logger
+from app.core.observability import get_langfuse_handler
 from app.core.schemas import AgentResponse, SourceInfo, ToolCall
 from app.rag.user_context import reset_current_user, set_current_user
 from app.tools.registry import get_tools
@@ -103,6 +109,25 @@ def get_graph():
     if _graph is None:
         _graph = _build_graph()
     return _graph
+
+
+def _build_config(user_id: str | uuid.UUID, session_id: str) -> dict:
+    """Build the LangGraph run config, including the Langfuse callback.
+
+    The handler is None when Langfuse isn't configured; in that case the
+    callbacks list is empty and the run proceeds with no tracing. The
+    metadata lets us filter traces by user and session in the dashboard.
+    """
+    handler = get_langfuse_handler()
+    return {
+        "recursion_limit": settings.max_agent_iterations * 2 + 4,
+        "callbacks": [handler] if handler else [],
+        "run_name": "cloudnest-agent",
+        "metadata": {
+            "langfuse_user_id": str(user_id),
+            "langfuse_session_id": session_id,
+        },
+    }
 
 
 def _build_user_content(
@@ -222,7 +247,7 @@ def run_agent(
         messages.extend(history)
         messages.append(HumanMessage(content=user_content))
 
-        config = {"recursion_limit": settings.max_agent_iterations * 2 + 4}
+        config = _build_config(user_id, session_id)
         final = get_graph().invoke({"messages": messages}, config=config)
 
         final_messages: list[BaseMessage] = final["messages"]
@@ -277,7 +302,7 @@ def stream_agent(
         messages.extend(history)
         messages.append(HumanMessage(content=user_content))
 
-        config = {"recursion_limit": settings.max_agent_iterations * 2 + 4}
+        config = _build_config(user_id, session_id)
 
         accumulated_answer = ""
         final_messages: list[BaseMessage] = []
