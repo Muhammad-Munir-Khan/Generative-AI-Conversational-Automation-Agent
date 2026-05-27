@@ -1,0 +1,48 @@
+# syntax=docker/dockerfile:1
+#
+# Frontend image: Next.js 15 (App Router) production build.
+#
+# Multi-stage:
+#   deps    - install node_modules (cached unless package files change)
+#   builder - run `next build` (produces .next/standalone)
+#   runner  - minimal runtime, copies only the standalone output
+#
+# IMPORTANT - build-time API URL:
+#   Next.js inlines NEXT_PUBLIC_* variables at BUILD time, not runtime. The
+#   browser (not the container) calls the backend, so this must be a URL the
+#   user's browser can reach. For local docker-compose that's
+#   http://localhost:8000 (the api port published to the host). For a real
+#   deploy it's your public API domain. It is passed as a build arg.
+
+# ---- deps ----
+FROM node:20-slim AS deps
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+# ---- builder ----
+FROM node:20-slim AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/ ./
+
+# Build-time public API URL (browser-reachable). Override per environment.
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+RUN npm run build
+
+# ---- runner ----
+FROM node:20-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1
+
+# Next.js standalone output bundles a minimal server + only needed deps.
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]

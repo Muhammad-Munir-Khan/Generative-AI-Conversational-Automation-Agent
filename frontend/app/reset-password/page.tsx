@@ -3,12 +3,12 @@
 import { Cloud } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 
 import { ThemeToggleIcon } from "@/components/ThemeToggleIcon";
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function Wordmark() {
   return (
@@ -33,7 +33,7 @@ function Wordmark() {
   );
 }
 
-export default function ResetPasswordPage() {
+function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token") || "";
@@ -73,7 +73,6 @@ export default function ResetPasswordPage() {
         setDone(true);
         setTimeout(() => router.push("/login"), 2500);
       } else {
-        // fastapi-users returns 400 for an invalid/expired token.
         const data = await res.json().catch(() => null);
         const reason = data?.detail;
         if (typeof reason === "string" && reason.includes("RESET_PASSWORD_BAD_TOKEN")) {
@@ -216,5 +215,15 @@ export default function ResetPasswordPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// useSearchParams() requires a Suspense boundary in Next.js production builds.
+// The page export wraps the form in Suspense so static prerendering succeeds.
+export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={null}>
+      <ResetPasswordForm />
+    </Suspense>
   );
 }

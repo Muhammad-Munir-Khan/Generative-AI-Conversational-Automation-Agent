@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1
+#
+# Backend image: FastAPI + LangGraph agent + RAG + voice.
+#
+# Notes specific to this stack:
+#   - torch is installed from the CPU-only index. The default PyPI torch pulls
+#     ~2-3GB of CUDA libraries that are useless on a no-GPU host/server. The
+#     CPU wheel keeps the image dramatically smaller.
+#   - ffmpeg is required by faster-whisper for audio decoding.
+#   - alembic/ and alembic.ini are copied so migrations run in-container via
+#     the entrypoint (alembic upgrade head) before uvicorn starts.
+#   - HF model caches point at a mounted volume so embeddings / Whisper models
+#     are not re-downloaded on every container start.
+
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/cache/huggingface \
+    HF_HUB_CACHE=/cache/huggingface \
+    SENTENCE_TRANSFORMERS_HOME=/cache/huggingface
+
+WORKDIR /app
+
+# System deps:
+#   build-essential - some wheels compile native extensions
+#   curl            - used by the healthcheck
+#   ffmpeg          - faster-whisper audio decoding
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
+# --- Python dependencies (layer-cached) ---
+# Copy only requirements first so this layer is reused unless deps change.
+COPY requirements.txt ./
+
+# Install CPU-only torch FIRST from the dedicated index, so the version pinned
+# in requirements.txt resolves to the CPU build instead of the CUDA build.
+# Then install the rest of requirements normally.
+RUN pip install --upgrade pip \
+ && pip install --index-url https://download.pytorch.org/whl/cpu torch==2.11.0 \
+ && pip install -r requirements.txt
+
+# --- Application code ---
+COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./alembic.ini
+COPY docker/entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+
+# entrypoint runs migrations, then starts uvicorn.
+ENTRYPOINT ["./entrypoint.sh"]

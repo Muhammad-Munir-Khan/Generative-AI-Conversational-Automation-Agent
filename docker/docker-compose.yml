@@ -1,9 +1,30 @@
-name: genai-agent
+name: cloudnest
 
 services:
+  # --- Database -------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: cloudnest-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-genai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-genai}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-genai} -d ${POSTGRES_DB:-genai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # --- Ollama (local LLM) ---------------------------------------------------
   ollama:
     image: ollama/ollama:latest
-    container_name: genai-ollama
+    container_name: cloudnest-ollama
     ports:
       - "11434:11434"
     volumes:
@@ -16,31 +37,40 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # One-shot helper that pulls the model on first start.
+  # One-shot: pull the default model on first start, then exit.
   ollama-pull:
     image: ollama/ollama:latest
-    container_name: genai-ollama-pull
+    container_name: cloudnest-ollama-pull
     depends_on:
       ollama:
         condition: service_healthy
     entrypoint: >
-      /bin/sh -c "
-      OLLAMA_HOST=http://ollama:11434 ollama pull ${LLM_MODEL:-llama3.2:3b}
-      "
+      /bin/sh -c "OLLAMA_HOST=http://ollama:11434 ollama pull ${LLM_MODEL:-llama3.2:3b}"
     restart: "no"
 
+  # --- Backend (FastAPI) ----------------------------------------------------
   api:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.api
-    container_name: genai-api
+      dockerfile: docker/Dockerfile-backend
+    container_name: cloudnest-api
     depends_on:
+      postgres:
+        condition: service_healthy
       ollama:
         condition: service_healthy
+    env_file:
+      - ../.env
     environment:
+      # Service-name overrides (these WIN over .env because Docker networking
+      # uses service names, not localhost). Everything else - API keys, JWT
+      # secret, OAuth creds, SMTP, Langfuse - comes from ../.env via env_file.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-genai}:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/${POSTGRES_DB:-genai}
       OLLAMA_BASE_URL: http://ollama:11434
-      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      BACKEND_URL: http://localhost:8000
+      FRONTEND_URL: http://localhost:3000
+      HF_HOME: /cache/huggingface
+      SENTENCE_TRANSFORMERS_HOME: /cache/huggingface
     ports:
       - "8000:8000"
     volumes:
@@ -48,19 +78,22 @@ services:
       - hf_cache:/cache/huggingface
     restart: unless-stopped
 
-  ui:
+  # --- Frontend (Next.js) ---------------------------------------------------
+  frontend:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.ui
-    container_name: genai-ui
+      dockerfile: docker/Dockerfile-frontend
+      args:
+        # Browser-reachable backend URL, inlined at build time.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    container_name: cloudnest-frontend
     depends_on:
       - api
-    environment:
-      API_URL: http://api:8000
     ports:
-      - "8501:8501"
+      - "3000:3000"
     restart: unless-stopped
 
 volumes:
+  postgres_data:
   ollama_data:
   hf_cache:

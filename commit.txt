@@ -1,0 +1,14 @@
+refactor: unify Docker architecture and stabilize frontend build + dependencies
+
+- Replaced legacy Dockerfiles (api/ui) with consolidated backend/frontend Dockerfiles
+- Introduced new entrypoint.sh for backend initialization and runtime control
+- Added/updated .gitattributes for consistent LF handling in containers
+- Updated docker-compose.yml for revised service structure and orchestration
+- Removed Streamlit UI (ui/streamlit_app.py) as part of frontend migration
+- Fixed Next.js frontend build issues (login/reset-password Suspense boundaries)
+- Improved OAuth button integration and frontend auth flow stability
+- Updated Next.js config for standalone output and build reliability
+- Aligned Python dependencies in requirements.txt to resolve version conflicts
+- Adjusted frontend API environment configuration (NEXT_PUBLIC_API_URL)
+
+Result: Clean Docker-based full-stack setup with stable frontend build and reproducible backend environment

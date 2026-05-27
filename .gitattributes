@@ -1,0 +1,57 @@
+# =============================================================================
+# Line-ending normalization
+#
+# Why this matters: shell scripts with Windows CRLF line endings FAIL inside
+# Linux containers ("bad interpreter: /bin/sh^M"). This file forces the right
+# endings regardless of which OS a contributor is on, so the Docker build and
+# the Linux deploy always get LF where it matters.
+# =============================================================================
+
+# Default: let Git auto-normalize text files (store LF, check out native).
+* text=auto
+
+# --- Must always be LF (run inside Linux containers / shells) ---
+*.sh        text eol=lf
+entrypoint  text eol=lf
+Dockerfile* text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+
+# --- Source code: normalize to LF (consistent across OS) ---
+*.py        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.jsx       text eol=lf
+*.mjs       text eol=lf
+*.json      text eol=lf
+*.css       text eol=lf
+*.html      text eol=lf
+*.md        text eol=lf
+*.toml      text eol=lf
+*.ini       text eol=lf
+*.env       text eol=lf
+.env*       text eol=lf
+
+# --- Windows-specific files: keep CRLF ---
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# --- Binary files: never touch line endings ---
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.webp      binary
+*.ico       binary
+*.pdf       binary
+*.zip       binary
+*.gz        binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.onnx      binary
+*.bin       binary
+*.pt        binary
+*.safetensors binary

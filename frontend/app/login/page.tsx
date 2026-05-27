@@ -3,41 +3,29 @@
 import { Cloud } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { ThemeToggleIcon } from "@/components/ThemeToggleIcon";
 import { AuthError } from "@/lib/auth";
 import { OAuthButtons } from "@/components/OAuthButtons";
 
-/* --------------- Inline Wordmark (matches landing page) ------------------- */
-
 function Wordmark() {
   return (
     <div className="inline-flex items-baseline gap-1.5">
-      <Cloud
-        className="w-5 h-5 text-[var(--accent)] self-center"
-        strokeWidth={2.25}
-      />
+      <Cloud className="w-5 h-5 text-[var(--accent)] self-center" strokeWidth={2.25} />
       <span
         className="text-xl font-bold bg-clip-text text-transparent tracking-tight"
-        style={{
-          backgroundImage:
-            "linear-gradient(135deg, var(--accent-bright), var(--accent))",
-        }}
+        style={{ backgroundImage: "linear-gradient(135deg, var(--accent-bright), var(--accent))" }}
       >
         CloudNest
       </span>
-      <span className="text-sm font-mono text-[var(--fg-tertiary)] opacity-70 -ml-1">
-        .ai
-      </span>
+      <span className="text-sm font-mono text-[var(--fg-tertiary)] opacity-70 -ml-1">.ai</span>
     </div>
   );
 }
 
-/* ---------------------------- Login Page --------------------------------- */
-
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login } = useAuth();
@@ -73,21 +61,15 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-[var(--bg-base)] flex items-center justify-center px-4">
-      {/* Theme toggle in top-right corner */}
       <div className="absolute top-5 right-5 z-10">
         <ThemeToggleIcon />
       </div>
 
-      {/* Ambient gradient orb behind the form */}
       <div
         className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] rounded-full opacity-20 blur-3xl pointer-events-none"
-        style={{
-          background:
-            "radial-gradient(circle, var(--accent-bright) 0%, transparent 65%)",
-        }}
+        style={{ background: "radial-gradient(circle, var(--accent-bright) 0%, transparent 65%)" }}
       />
 
-      {/* Subtle grid overlay */}
       <div
         className="absolute inset-0 opacity-[0.025] pointer-events-none"
         style={{
@@ -98,7 +80,6 @@ export default function LoginPage() {
       />
 
       <div className="relative w-full max-w-md">
-        {/* Wordmark header */}
         <div className="mb-8 text-center">
           <Link href="/" aria-label="CloudNest home" className="inline-block">
             <Wordmark />
@@ -111,14 +92,10 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* Form card with subtle glow */}
         <div className="relative">
           <div
             className="absolute inset-0 rounded-2xl opacity-30 blur-xl pointer-events-none"
-            style={{
-              background:
-                "linear-gradient(135deg, var(--accent-bright), var(--accent))",
-            }}
+            style={{ background: "linear-gradient(135deg, var(--accent-bright), var(--accent))" }}
           />
           <form
             onSubmit={handleSubmit}
@@ -185,15 +162,21 @@ export default function LoginPage() {
                 Create an account
               </Link>
             </div>
-
           </form>
         </div>
 
-        {/* Tiny footer signal */}
         <div className="mt-6 text-center text-[0.65rem] font-mono uppercase tracking-wider text-[var(--fg-muted)]">
           secured by httpOnly cookies &middot; jwt &middot; postgres
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }
