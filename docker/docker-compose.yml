@@ -48,6 +48,32 @@ services:
       /bin/sh -c "OLLAMA_HOST=http://ollama:11434 ollama pull ${LLM_MODEL:-llama3.2:3b}"
     restart: "no"
 
+  # --- Weaviate (vector store, native multi-tenancy) -----------------------
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.27.6
+    container_name: cloudnest-weaviate
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    environment:
+      # We bring our own BGE vectors, so no vectorizer module is enabled.
+      DEFAULT_VECTORIZER_MODULE: none
+      ENABLE_MODULES: ""
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      QUERY_DEFAULTS_LIMIT: "25"
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      CLUSTER_HOSTNAME: node1
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+
+
   # --- Backend (FastAPI) ----------------------------------------------------
   api:
     build:
@@ -59,6 +85,8 @@ services:
         condition: service_healthy
       ollama:
         condition: service_healthy
+      weaviate:
+        condition: service_healthy
     env_file:
       - ../.env
     environment:
@@ -67,6 +95,8 @@ services:
       # secret, OAuth creds, SMTP, Langfuse - comes from ../.env via env_file.
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-genai}:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/${POSTGRES_DB:-genai}
       OLLAMA_BASE_URL: http://ollama:11434
+      WEAVIATE_URL: http://weaviate:8080
+      WEAVIATE_GRPC_PORT: "50051"
       BACKEND_URL: http://localhost:8000
       FRONTEND_URL: http://localhost:3000
       HF_HOME: /cache/huggingface
@@ -97,3 +127,4 @@ volumes:
   postgres_data:
   ollama_data:
   hf_cache:
+  weaviate_data:

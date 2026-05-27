@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     smtp_from_name: str = "CloudNest.ai"
 
+    weaviate_url: str = "http://localhost:8080"
+    weaviate_grpc_port: int = 50051
+    weaviate_index_name: str = "CloudNestDocs"
+
     @property
     def docs_dir(self) -> Path:
         return self.data_dir / "docs"

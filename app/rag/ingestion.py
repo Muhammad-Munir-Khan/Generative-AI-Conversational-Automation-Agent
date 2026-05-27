@@ -1,9 +1,8 @@
-"""Ingest documents (PDF + text) into per-user Chroma collections."""
+"""Ingest documents (PDF + text) into per-user Weaviate tenants."""
 import uuid
 from pathlib import Path
 from typing import Iterable
 
-from langchain_chroma import Chroma
 from langchain_community.document_loaders import (
     Docx2txtLoader,
     PyPDFLoader,
@@ -15,11 +14,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.rag.collections import (
-    collection_name_for,
+    add_documents_for,
+    count_by_source_file,
+    delete_by_source_file,
+    delete_user_collection,
     docs_dir_for,
-    get_user_vectorstore,
+    ensure_tenant,
 )
-from app.rag.embeddings import get_embeddings
 
 log = get_logger(__name__)
 
@@ -71,9 +72,9 @@ def chunk_documents(docs: Iterable[Document]) -> list[Document]:
 
 
 def ingest_for_user(user_id: str | uuid.UUID) -> dict:
-    """Index every file in this user's docs folder into their collection.
+    """Index every file in this user's docs folder into their tenant.
 
-    Wipes the user's collection first so re-runs produce a clean state. Use
+    Wipes the user's tenant first so re-runs produce a clean state. Use
     ingest_single_file_for_user() for incremental upload-then-index flows.
     """
     user_dir = docs_dir_for(user_id)
@@ -85,19 +86,11 @@ def ingest_for_user(user_id: str | uuid.UUID) -> dict:
     chunks = chunk_documents(docs)
     log.info("created %d chunks", len(chunks))
 
-    # Wipe and recreate the collection.
-    store = get_user_vectorstore(user_id)
-    try:
-        store.delete_collection()
-    except Exception as e:
-        log.debug("delete_collection (likely empty): %s", e)
+    # Wipe and recreate the tenant for a clean re-index.
+    delete_user_collection(user_id)
+    ensure_tenant(user_id)
 
-    Chroma.from_documents(
-        documents=chunks,
-        embedding=get_embeddings(),
-        persist_directory=str(settings.chroma_dir),
-        collection_name=collection_name_for(user_id),
-    )
+    add_documents_for(user_id, chunks)
     log.info("ingestion complete for user %s", user_id)
     return {"files": n_files, "chunks": len(chunks)}
 
@@ -106,9 +99,9 @@ def ingest_single_file_for_user(
     user_id: str | uuid.UUID,
     file_path: Path,
 ) -> dict:
-    """Index one file (typically just-uploaded) into the user's collection.
+    """Index one file (typically just-uploaded) into the user's tenant.
 
-    Does NOT wipe the existing collection — chunks are added on top of any
+    Does NOT wipe the existing tenant - chunks are added on top of any
     previously ingested ones. Returns chunk count for this file only.
     """
     if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
@@ -121,47 +114,33 @@ def ingest_single_file_for_user(
         d.metadata.setdefault("page", d.metadata.get("page", 0))
     chunks = chunk_documents(raw)
 
-    # Open the existing collection and add to it (don't wipe).
-    store = get_user_vectorstore(user_id)
-    store.add_documents(chunks)
+    # add_documents_for ensures the tenant exists, then adds (no wipe).
+    add_documents_for(user_id, chunks)
     log.info("added %d chunks for %s", len(chunks), file_path.name)
     return {"file": file_path.name, "chunks": len(chunks)}
 
 
 def delete_file_from_user(user_id: str | uuid.UUID, filename: str) -> int:
-    """Remove all chunks for a specific source file from the user's collection.
+    """Remove all chunks for a specific source file from the user's tenant.
 
     Returns the number of chunks deleted.
     """
-    store = get_user_vectorstore(user_id)
-    # Chroma's where filter — match by source_file metadata.
-    coll = store._collection
-    matches = coll.get(where={"source_file": filename})
-    ids = matches.get("ids", [])
-    if not ids:
-        return 0
-    coll.delete(ids=ids)
-    log.info("deleted %d chunks for %s (user=%s)", len(ids), filename, user_id)
-    return len(ids)
+    return delete_by_source_file(user_id, filename)
 
 
 def list_files_for_user(user_id: str | uuid.UUID) -> list[dict]:
     """List files in the user's docs folder with size + chunk-count metadata."""
     user_dir = docs_dir_for(user_id)
     files = []
-    store = get_user_vectorstore(user_id)
-    coll = store._collection
-
     for path in sorted(user_dir.iterdir()):
         if not path.is_file():
             continue
         if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
-        chunks = coll.get(where={"source_file": path.name})
         files.append({
             "filename": path.name,
             "size_bytes": path.stat().st_size,
-            "chunks_indexed": len(chunks.get("ids", [])),
+            "chunks_indexed": count_by_source_file(user_id, path.name),
         })
     return files
 
@@ -171,26 +150,24 @@ def list_files_for_user(user_id: str | uuid.UUID) -> list[dict]:
 def ingest() -> dict:
     """Legacy global ingestion. Now reserved for superuser /rag/ingest endpoint.
 
-    Reads from settings.docs_dir (the root, not a per-user subdir) and writes
-    to a 'documents' collection. Use ingest_for_user() for normal user flows.
+    Uses a fixed 'global' tenant rather than the old 'documents' collection so
+    it fits the multi-tenant model. Reads from settings.docs_dir root.
     """
     log.info("LEGACY global ingest from %s", settings.docs_dir)
     docs, n_files = load_documents(settings.docs_dir)
     chunks = chunk_documents(docs)
-    Chroma.from_documents(
-        documents=chunks,
-        embedding=get_embeddings(),
-        persist_directory=str(settings.chroma_dir),
-        collection_name="documents",
-    )
+    # Reuse the per-user machinery with a sentinel "global" user namespace.
+    GLOBAL_NS = uuid.UUID(int=0)  # 00000000-0000-0000-0000-000000000000
+    delete_user_collection(GLOBAL_NS)
+    ensure_tenant(GLOBAL_NS)
+    add_documents_for(GLOBAL_NS, chunks)
     return {"files": n_files, "chunks": len(chunks)}
 
 
 if __name__ == "__main__":
-    # CLI entry point — prompts for a user_id since there's no implicit "default user" anymore
     import sys
     if len(sys.argv) < 2:
         print("Usage: python -m app.rag.ingestion <user_uuid>")
         sys.exit(1)
     result = ingest_for_user(sys.argv[1])
-    print(f"\n✓ Indexed {result['chunks']} chunks from {result['files']} files.")
+    print(f"\nIndexed {result['chunks']} chunks from {result['files']} files.")

@@ -1,14 +1,33 @@
-refactor: unify Docker architecture and stabilize frontend build + dependencies
+feat: migrate vector store from ChromaDB to Weaviate (native multi-tenancy)
 
-- Replaced legacy Dockerfiles (api/ui) with consolidated backend/frontend Dockerfiles
-- Introduced new entrypoint.sh for backend initialization and runtime control
-- Added/updated .gitattributes for consistent LF handling in containers
-- Updated docker-compose.yml for revised service structure and orchestration
-- Removed Streamlit UI (ui/streamlit_app.py) as part of frontend migration
-- Fixed Next.js frontend build issues (login/reset-password Suspense boundaries)
-- Improved OAuth button integration and frontend auth flow stability
-- Updated Next.js config for standalone output and build reliability
-- Aligned Python dependencies in requirements.txt to resolve version conflicts
-- Adjusted frontend API environment configuration (NEXT_PUBLIC_API_URL)
+Per team lead's direction. Self-hosted Weaviate 1.27.6 added in docker-compose with
+a single collection (CloudNestDocs) and one tenant per user (user_<hex>) to provide
+database-level isolation using Weaviate multi-tenancy best practices.
 
-Result: Clean Docker-based full-stack setup with stable frontend build and reproducible backend environment
+- Replaced ChromaDB integration with Weaviate v4 client and MT-enabled
+  WeaviateVectorStore in app/rag/collections.py
+- Added centralized tenant_for() enforcement so all add/search/count/delete
+  operations remain tenant-scoped and cannot leak across users
+- Added _tenant_exists() safety guard to prevent tenant lookup failures for
+  fallback/system users and return empty results safely
+- Updated ingestion and retrieval layers to use Weaviate filtered queries and
+  aggregate APIs instead of Chroma metadata filters
+- Added tenant isolation validation test in app/rag/isolation_test.py
+  (verified PASS in-container)
+- Added Weaviate 1.27.6 service to docker-compose with:
+  - multi-tenancy enabled
+  - persistent volume storage
+  - gRPC port 50051
+  - healthcheck support
+  - BYO BGE embeddings
+- Replaced langchain-chroma/chromadb dependencies with:
+  - langchain-weaviate
+  - weaviate-client
+- Relaxed grpcio pin for compatibility with weaviate-client
+- Added Weaviate configuration values:
+  - weaviate_url
+  - weaviate_grpc_port
+  - weaviate_index_name
+- Preserved existing BGE embedding pipeline
+- Removed ChromaDB/PostHog telemetry noise from stack
+"
