@@ -124,33 +124,18 @@ export interface AdminUserInfo {
   created_at: string | null;  // ISO string from backend
 }
 
-export type ContentType = "quran" | "hadith" | "tafsir" | "fiqh" | "book" | string;
-
 // Structured corpus item (mirrors CorpusItem on the backend).
-// Only `text` is required; everything else is optional metadata.
+// Generic core - only `text` is required; everything else is optional metadata.
+// content_type is free-form ("document", "policy", "manual", "faq", ...).
 export interface CorpusItemInput {
   text: string;
   content_type?: string;
   source_title?: string;
-  language?: string;
-  scholar?: string;
-  arabic_text?: string;
-  translation?: string;
-  translator?: string;
-  surah_number?: number;
-  surah_name?: string;
-  ayah_number?: number;
-  collection?: string;
-  hadith_number?: string;
-  book_name?: string;
-  narrator_chain?: string;
-  grading?: string;
-  grading_source?: string;
   book_title?: string;
   author?: string;
-  madhab?: string;
-  topic?: string;
+  language?: string;
   volume?: string;
+  topic?: string;
   page?: string;
 }
 
@@ -180,6 +165,7 @@ export interface CorpusSourceInfo {
 export interface CorpusSearchHit {
   text: string;
   score: number;
+
   source_title: string | null;
   content_type: string | null;
   author: string | null;

@@ -1,24 +1,34 @@
-"""Tool: search the indexed knowledge base."""
+"""Tool: search the user's OWN indexed documents (personal corpus only).
+
+Scoped strictly to the active user's tenant in CloudNestDocs. For the shared
+admin-curated knowledge base, the agent has a separate tool
+(knowledge_base_search). Keeping these two tools scope-distinct stops the
+agent from oscillating between them on ambiguous questions.
+"""
 from langchain_core.tools import tool
 
-from app.rag.chain import rag_answer
+from app.rag.chain import rag_answer_personal_only
 
 
 @tool
 def document_search(question: str) -> str:
-    """Search the user's indexed documents (PDFs, TXT, MD) for an answer.
+    """Search the user's OWN indexed documents (personal uploads only).
 
-    Use this whenever the user asks about content from their uploaded files,
-    domain knowledge, manuals, policies, or anything that could be in the docs.
+    Use this for questions about files the user uploaded themselves. For
+    admin-curated reference material (policies, manuals, FAQs, shared docs),
+    use knowledge_base_search instead.
+
+    Call this AT MOST ONCE per turn. If it returns no useful info, say so
+    honestly - do not retry with reworded queries.
 
     Args:
-        question: A natural-language question to search the documents for.
+        question: A natural-language question to search the personal documents for.
 
     Returns:
         An answer with bracketed source citations, or a no-answer message.
     """
-    result = rag_answer(question)
+    result = rag_answer_personal_only(question)
     if not result.sources:
-        return "No matching information found in the indexed documents."
+        return "No matching information found in the user's personal documents."
     sources_str = ", ".join(s.source_file for s in result.sources)
     return f"{result.answer}\n\nSources: {sources_str}"

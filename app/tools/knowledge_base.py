@@ -1,9 +1,8 @@
 """Tool: search the shared knowledge base (admin-curated, global).
 
 This is the agent-facing counterpart to /admin/corpus/search. It searches the
-SHARED knowledge base that admins ingest into (IslamicCorpus / global corpus),
-NOT the user's personal documents. Use document_search for the user's own
-files.
+SHARED knowledge base that admins ingest into (the global corpus), NOT the
+user's personal documents. Use document_search for the user's own files.
 
 Design note (intentional, mirrors web_search NOT document_search):
   document_search calls rag_answer() internally - which runs another LLM
@@ -35,8 +34,7 @@ def knowledge_base_search(question: str) -> str:
 
     Use this when the question is about content that an administrator would
     have added to the shared knowledge base - reference material, policies,
-    curated documents, religious texts, etc. - rather than the user's own
-    uploaded files.
+    manuals, curated documents - rather than the user's own uploaded files.
 
     Args:
         question: A natural-language question to search the knowledge base for.

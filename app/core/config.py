@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.1-8b-instant"
     groq_vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-    # OpenRouter — OpenAI-compatible gateway with access to Claude, GPT-4,
+    # OpenRouter - OpenAI-compatible gateway with access to Claude, GPT-4,
     # Gemini, Llama, Mistral, and ~100 other models through a single API key.
     # See https://openrouter.ai/models for the full catalog and per-model pricing.
     openrouter_api_key: str | None = None
@@ -44,16 +44,22 @@ class Settings(BaseSettings):
     top_k: int = 4
 
     # Agent
-    max_agent_iterations: int = 6
+    # max_agent_iterations is the soft cap on agent ReAct cycles. The actual
+    # LangGraph recursion limit is (max_agent_iterations * 2 + 4), giving the
+    # graph room for both the agent-step and tool-step nodes per cycle plus a
+    # small buffer for the final synthesis step. Default 8 -> recursion 20,
+    # which comfortably handles compound multi-part user questions without
+    # giving the agent so much rope it spirals on bad tools.
+    max_agent_iterations: int = 8
     memory_window: int = 10
 
-    # Voice — STT
+    # Voice - STT
     whisper_model: str = "base"
     whisper_compute_type: str = "int8"
     whisper_language: str | None = None
     enable_voice: bool = True
 
-    # Voice — TTS
+    # Voice - TTS
     tts_backend: str = "piper"
     piper_voice: str = "en_US-lessac-medium"
     edge_tts_voice: str = "en-US-AriaNeural"
@@ -92,7 +98,7 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:8000"
 
     # --- Multi-LLM ensemble ---
-    # Two model lists — one for each provider that supports ensemble mode.
+    # Two model lists - one for each provider that supports ensemble mode.
     # The active list is selected automatically based on LLM_PROVIDER.
     # OpenRouter's free-tier catalog shifts; verify model availability at
     # https://openrouter.ai/models?q=free before counting on a specific name.

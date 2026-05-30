@@ -1,33 +1,43 @@
-feat: migrate vector store from ChromaDB to Weaviate (native multi-tenancy)
+feat: generic knowledge base + agent fixes + global force-logout
 
-Per team lead's direction. Self-hosted Weaviate 1.27.6 added in docker-compose with
-a single collection (CloudNestDocs) and one tenant per user (user_<hex>) to provide
-database-level isolation using Weaviate multi-tenancy best practices.
+GENERIC KB:
+- Rename Weaviate collection IslamicCorpus -> GlobalKnowledgeBase
+- Strip Islamic-specific schema fields (surah_*, ayah_*, hadith_*, madhab,
+  scholar, narrator_chain, grading*, arabic_text, translator, collection,
+  book_name)
+- Keep generic core: text, content_type, source_title, book_title, author,
+  language, volume, topic, page. content_type is free-form (admins label
+  content however suits their KB: "document", "policy", "manual", "faq", ...)
+- global_search() simplified (drop madhab + collection filters)
+- Docstrings + frontend types + system prompt updated for generic positioning
 
-- Replaced ChromaDB integration with Weaviate v4 client and MT-enabled
-  WeaviateVectorStore in app/rag/collections.py
-- Added centralized tenant_for() enforcement so all add/search/count/delete
-  operations remain tenant-scoped and cannot leak across users
-- Added _tenant_exists() safety guard to prevent tenant lookup failures for
-  fallback/system users and return empty results safely
-- Updated ingestion and retrieval layers to use Weaviate filtered queries and
-  aggregate APIs instead of Chroma metadata filters
-- Added tenant isolation validation test in app/rag/isolation_test.py
-  (verified PASS in-container)
-- Added Weaviate 1.27.6 service to docker-compose with:
-  - multi-tenancy enabled
-  - persistent volume storage
-  - gRPC port 50051
-  - healthcheck support
-  - BYO BGE embeddings
-- Replaced langchain-chroma/chromadb dependencies with:
-  - langchain-weaviate
-  - weaviate-client
-- Relaxed grpcio pin for compatibility with weaviate-client
-- Added Weaviate configuration values:
-  - weaviate_url
-  - weaviate_grpc_port
-  - weaviate_index_name
-- Preserved existing BGE embedding pipeline
-- Removed ChromaDB/PostHog telemetry noise from stack
-"
+AGENT RECURSION-LOOP FIX:
+The agent hit recursion limit on compound questions because document_search
+and knowledge_base_search had overlapping behavior after the prior KB
+integration switched rag_answer to retrieve_merged. The agent oscillated
+between the two tools, retrying with reworded queries until it ran out of
+iterations.
+
+- chain.py: split into rag_answer (merged, used by /rag/query) and
+  rag_answer_personal_only (personal-only, used by document_search tool)
+- document_search.py: calls rag_answer_personal_only -- restores its
+  documented "personal docs only" scope, eliminates the overlap
+- graph.py SYSTEM_PROMPT: explicit anti-thrash rules - "call each retrieval
+  tool at most once per turn", "for compound questions formulate ONE broad
+  query, do NOT issue one search per sub-question"
+- config.py: max_agent_iterations 6 -> 8 (recursion limit 16 -> 20) as a
+  safety net
+
+GLOBAL FORCE-LOGOUT (security):
+Force-logout was previously enforced only on /admin/* endpoints because
+current_active_user (used by chat/RAG/sessions) didn't check
+jwt_invalidated_at. Force-logging-out a regular user did nothing visible.
+
+- auth.py: current_active_user now wraps the fastapi-users dependency with
+  the iat-freshness check. Every authenticated endpoint - chat, RAG,
+  sessions, admin - rejects tokens issued before jwt_invalidated_at.
+- current_active_fresh_user kept as alias for backward compat with
+  admin_deps.py.
+- Verified: chat endpoints return 401 immediately on victim's next request
+  after force-logout. Frontend's apiFetch catches the 401 and redirects to
+  /login. User re-authenticates to get a fresh token.

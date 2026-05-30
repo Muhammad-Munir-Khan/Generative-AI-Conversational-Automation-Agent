@@ -1,35 +1,34 @@
-"""Global Islamic knowledge base on Weaviate.
+"""Shared global knowledge base on Weaviate.
 
-This is the SHARED corpus (Quran, hadith, tafsir, fiqh, books) that every user
-can read. It is deliberately SEPARATE from the per-user multi-tenant collection
-(`CloudNestDocs` in app/rag/collections.py):
+This is the SHARED corpus (admin-curated documents, manuals, policies, books,
+etc.) that every user can read. It is deliberately SEPARATE from the per-user
+multi-tenant collection (`CloudNestDocs` in app/rag/collections.py):
 
   - Per-user RAG  -> collection CloudNestDocs, multi-tenancy ON, one tenant per
                      user, write+read scoped to the owning user.
-  - Global RAG    -> collection IslamicCorpus, multi-tenancy OFF, world-readable,
-                     admin-write-only. THIS FILE.
+  - Global RAG    -> collection GlobalKnowledgeBase, multi-tenancy OFF,
+                     world-readable, admin-write-only. THIS FILE.
 
 Why a separate collection (not a "global tenant"): the access model is
-different (shared vs isolated) AND the schema is different. Islamic texts carry
-rich, citation-critical metadata (surah/ayah, hadith number, collection,
-narrator chain, grading, madhab, scholar) that a generic user PDF does not.
-Precise citation is the whole point of this corpus, so the schema models it
-explicitly rather than dumping text into generic chunks.
+fundamentally different (shared vs isolated). Keeping them in distinct
+collections makes the security boundary explicit at the storage layer rather
+than relying on tenant-filter discipline at every read.
 
-Content types (the `content_type` property):
-  quran  - surah/ayah, arabic, translation, translator
-  hadith - collection, number, book, narrator_chain, grading, grading_source
-  tafsir - book_title, author, surah/ayah
-  fiqh   - book_title, author, madhab, topic
-  book   - generic fallback: book_title, author
+Content model:
+  Each object has a `content_type` (free-form label - "document", "policy",
+  "manual", "faq", "report", or whatever your admins decide to use). It is
+  used for filtering only; nothing in the code enforces a fixed taxonomy.
 
-DESIGN NOTE on authority (read before extending):
-  This corpus REPORTS what authoritative sources say; it does not manufacture
-  religious authority. A `grading` field stores an EXISTING scholarly grading
-  (e.g. "sahih") together with `grading_source` (WHO graded it, e.g. "al-Albani").
-  Nothing here computes a grading. Retrieval surfaces sources + citations; it is
-  the presentation layer's job to attribute, show multiple views, and direct
-  users to qualified scholars for rulings.
+Schema (generic core, used by every object):
+  text          - the searchable body content
+  content_type  - free-form category label (filterable)
+  source_title  - human-readable name of the source document/book/article
+  language      - ISO code, optional
+  author        - optional attribution
+  book_title    - longer/canonical title if different from source_title
+  volume        - optional (multi-volume references)
+  topic         - optional subject tag
+  page          - optional page reference (stored as text; pagination varies)
 """
 from __future__ import annotations
 
@@ -46,58 +45,43 @@ from app.rag.embeddings import get_embeddings
 
 log = get_logger(__name__)
 
-GLOBAL_INDEX = "IslamicCorpus"
-
-# Allowed content types - kept as a constant so loaders/filters stay consistent.
-CONTENT_TYPES = {"quran", "hadith", "tafsir", "fiqh", "book"}
+# Collection name (Weaviate class). Lives in its own dedicated collection
+# rather than a shared tenant so the security boundary - "anyone can read,
+# only admins can write" - is enforced at the storage layer.
+GLOBAL_INDEX = "GlobalKnowledgeBase"
 
 
 def _build_schema_properties():
     """The explicit, typed schema for the global corpus.
 
-    One collection holds all content types; each object fills the fields
-    relevant to its type and leaves others empty. `text` is the embedded,
-    searchable field. Numeric fields (surah/ayah numbers) are INT so we can
-    range/equality filter; everything else is TEXT.
+    Deliberately small: a generic core of fields that fit any reference
+    material (documents, manuals, policies, books). `text` is the embedded,
+    searchable field. All other fields are TEXT and optional - chunks set
+    only the fields that apply to them.
     """
     from weaviate.classes.config import Property, DataType
 
     return [
-        # --- shared across all types ---
+        # body + filterable category
         Property(name="text", data_type=DataType.TEXT),            # searchable content
-        Property(name="content_type", data_type=DataType.TEXT),    # quran|hadith|tafsir|fiqh|book
+        Property(name="content_type", data_type=DataType.TEXT),    # free-form category label
+        # source identity / attribution
         Property(name="source_title", data_type=DataType.TEXT),    # human-readable source name
-        Property(name="language", data_type=DataType.TEXT),
-        Property(name="scholar", data_type=DataType.TEXT),         # attribution, where applicable
-        Property(name="arabic_text", data_type=DataType.TEXT),
-        Property(name="translation", data_type=DataType.TEXT),
-        Property(name="translator", data_type=DataType.TEXT),
-        # --- quran ---
-        Property(name="surah_number", data_type=DataType.INT),
-        Property(name="surah_name", data_type=DataType.TEXT),
-        Property(name="ayah_number", data_type=DataType.INT),
-        # --- hadith ---
-        Property(name="collection", data_type=DataType.TEXT),       # Bukhari, Muslim, ...
-        Property(name="hadith_number", data_type=DataType.TEXT),    # text (numbers vary in format)
-        Property(name="book_name", data_type=DataType.TEXT),        # chapter/book within collection
-        Property(name="narrator_chain", data_type=DataType.TEXT),   # isnad
-        Property(name="grading", data_type=DataType.TEXT),          # EXISTING grading e.g. "sahih"
-        Property(name="grading_source", data_type=DataType.TEXT),   # WHO graded it
-        # --- tafsir / fiqh / book ---
-        Property(name="book_title", data_type=DataType.TEXT),
+        Property(name="book_title", data_type=DataType.TEXT),      # canonical title if different
         Property(name="author", data_type=DataType.TEXT),
-        Property(name="madhab", data_type=DataType.TEXT),           # hanafi|maliki|shafii|hanbali|...
-        Property(name="topic", data_type=DataType.TEXT),
+        Property(name="language", data_type=DataType.TEXT),
+        # locator (optional)
         Property(name="volume", data_type=DataType.TEXT),
+        Property(name="topic", data_type=DataType.TEXT),
         Property(name="page", data_type=DataType.TEXT),
     ]
 
 
 def ensure_global_collection() -> None:
-    """Create the global IslamicCorpus collection if it doesn't exist.
+    """Create the global knowledge-base collection if it doesn't exist.
 
     Multi-tenancy OFF (shared/world-readable). BYO vectors (BGE), so no
-    vectorizer module. Idempotent.
+    vectorizer module. Idempotent - safe to call repeatedly.
     """
     client = get_weaviate_client()
     if client.collections.exists(GLOBAL_INDEX):
@@ -122,15 +106,15 @@ def _embedder():
 
 
 def add_to_global_corpus(items: list[dict[str, Any]]) -> int:
-    """Bulk-add structured Islamic content to the global corpus.
+    """Bulk-add structured content to the global corpus.
 
     Each item is a dict with at least {"text": ...} plus any metadata fields
-    from the schema (content_type, surah_number, collection, grading, ...).
-    Unknown keys are ignored by Weaviate's typed schema. We compute the BGE
+    from the schema (content_type, source_title, author, page, ...). Unknown
+    keys are ignored by Weaviate's typed schema. We compute the BGE
     embedding for each item's `text` ourselves (BYO vectors).
 
-    Returns the number of objects inserted. This is the single entry point all
-    loaders (Quran loader, hadith loader, PDF parser) feed into.
+    Returns the number of objects inserted. Single entry point all loaders
+    (PDF parser, structured ingest, future loaders) feed into.
     """
     if not items:
         return 0
@@ -145,7 +129,7 @@ def add_to_global_corpus(items: list[dict[str, Any]]) -> int:
     inserted = 0
     with coll.batch.dynamic() as batch:
         for it, vec in zip(items, vectors):
-            # content_type is free-form (e.g. "document", "hadith", "policy", ...).
+            # content_type is free-form (e.g. "document", "policy", "manual", ...).
             # Default to "document" if missing; lowercased for consistent filtering.
             props = dict(it)
             ct = str(props.get("content_type", "document")).lower()
@@ -156,39 +140,27 @@ def add_to_global_corpus(items: list[dict[str, Any]]) -> int:
     return inserted
 
 
-def _filters_from(content_type: Optional[str], madhab: Optional[str],
-                  collection: Optional[str]):
-    """Build a Weaviate filter from optional metadata constraints."""
+def _filters_from(content_type: Optional[str]):
+    """Build a Weaviate filter from an optional content_type constraint."""
     from weaviate.classes.query import Filter
 
-    clauses = []
-    if content_type:
-        clauses.append(Filter.by_property("content_type").equal(content_type.lower()))
-    if madhab:
-        clauses.append(Filter.by_property("madhab").equal(madhab.lower()))
-    if collection:
-        clauses.append(Filter.by_property("collection").equal(collection))
-    if not clauses:
+    if not content_type:
         return None
-    if len(clauses) == 1:
-        return clauses[0]
-    return Filter.all_of(clauses)
+    return Filter.by_property("content_type").equal(content_type.lower())
 
 
 def global_search(
     query: str,
     k: int = 5,
     content_type: Optional[str] = None,
-    madhab: Optional[str] = None,
-    collection: Optional[str] = None,
     alpha: float = 0.5,
 ) -> list[tuple[Document, float]]:
     """Hybrid (BM25 + vector) search over the global corpus.
 
     alpha: 0.0 = pure keyword (BM25), 1.0 = pure vector, 0.5 = balanced hybrid.
-    Optional metadata filters narrow by content_type ("hadith"), madhab, or
-    hadith collection. Returns [(Document, score)] where Document.metadata
-    carries the full citation fields so callers can cite precisely.
+    Optional content_type narrows to a single category. Returns
+    [(Document, score)] where Document.metadata carries the per-object fields
+    so callers can cite precisely.
     """
     client = get_weaviate_client()
     if not client.collections.exists(GLOBAL_INDEX):
@@ -196,7 +168,7 @@ def global_search(
     coll = client.collections.get(GLOBAL_INDEX)
 
     query_vec = _embedder().embed_query(query)
-    filters = _filters_from(content_type, madhab, collection)
+    filters = _filters_from(content_type)
 
     from weaviate.classes.query import MetadataQuery
     res = coll.query.hybrid(

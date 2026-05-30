@@ -35,7 +35,7 @@ from app.rag.global_collection import (
 log = get_logger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-MAX_PDF_BYTES = 25 * 1024 * 1024  # 25MB for corpus books
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB cap for corpus files
 
 
 # =============================================================================
@@ -65,32 +65,21 @@ class UserDetailsUpdate(BaseModel):
 
 
 class CorpusItem(BaseModel):
-    """One structured item to ingest into the global corpus."""
+    """One structured item to ingest into the global corpus.
+
+    Generic core: only `text` is required. Everything else is optional
+    metadata that gets stored alongside the chunk for filtering and
+    citation. Free-form `content_type` so admins can categorize content
+    however suits their use case ("document", "policy", "manual", "faq", ...).
+    """
     text: str = Field(..., min_length=1)
-    content_type: str = "book"
+    content_type: str = "document"
     source_title: str | None = None
-    language: str | None = None
-    scholar: str | None = None
-    arabic_text: str | None = None
-    translation: str | None = None
-    translator: str | None = None
-    # quran
-    surah_number: int | None = None
-    surah_name: str | None = None
-    ayah_number: int | None = None
-    # hadith
-    collection: str | None = None
-    hadith_number: str | None = None
-    book_name: str | None = None
-    narrator_chain: str | None = None
-    grading: str | None = None
-    grading_source: str | None = None
-    # tafsir/fiqh/book
     book_title: str | None = None
     author: str | None = None
-    madhab: str | None = None
-    topic: str | None = None
+    language: str | None = None
     volume: str | None = None
+    topic: str | None = None
     page: str | None = None
 
 
@@ -320,7 +309,8 @@ async def ingest_structured(
     """Ingest structured content (JSON) into the global corpus.
 
     Each item carries explicit metadata for citation. Use this path for any
-    content that needs precise citation (Quran, hadith, etc.).
+    content where you want to set the fields precisely (vs the file upload
+    path which infers chunks from a document).
     """
     items = [it.model_dump(exclude_none=True) for it in req.items]
     try:
@@ -354,7 +344,7 @@ async def ingest_file(
     metadata you pass (content_type, source_title, author).
 
     content_type is free-form: pass whatever label suits your knowledge base
-    (e.g. "document", "policy", "manual", "research", "hadith", ...).
+    (e.g. "document", "policy", "manual", "faq", "report", ...).
     """
     from app.rag.ingestion import SUPPORTED_EXTENSIONS, _load_one, chunk_documents
     import tempfile
@@ -373,10 +363,10 @@ async def ingest_file(
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="empty file")
-    if len(data) > MAX_PDF_BYTES:
+    if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
-            detail=f"File too large. Max {MAX_PDF_BYTES // (1024*1024)}MB.",
+            detail=f"File too large. Max {MAX_UPLOAD_BYTES // (1024*1024)}MB.",
         )
 
     tmp_path = Path(tempfile.gettempdir()) / safe_name

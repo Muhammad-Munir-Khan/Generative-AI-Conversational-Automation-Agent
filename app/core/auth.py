@@ -5,10 +5,15 @@ Backends:
   - "cookie": httpOnly cookie transport (web frontend)
 Both share one JWT strategy. OAuth (Google + GitHub) issues the same cookie.
 
-Force-logout support:
+Force-logout enforcement (security-critical):
   - Our JWT strategy adds an `iat` (issued-at) claim to every token.
   - When an admin force-logs out a user, users.jwt_invalidated_at is set.
-  - current_active_fresh_user (below) rejects tokens whose iat predates that.
+  - Every request that depends on `current_active_user` runs the freshness
+    check: if the JWT's iat predates jwt_invalidated_at, 401.
+  - This means force-logout is genuinely global: chat, RAG, sessions, admin -
+    every authenticated endpoint rejects stale tokens on the very next call.
+  - Cost: one indexed users.jwt_invalidated_at lookup per request via the
+    underlying fastapi-users session, plus a JWT decode we'd be doing anyway.
 """
 import uuid
 from datetime import datetime, timezone
@@ -167,14 +172,16 @@ fastapi_users = FastAPIUsers[User, uuid.UUID](
     [cookie_backend, jwt_backend],
 )
 
-current_active_user = fastapi_users.current_user(active=True)
+# fastapi-users' raw dependency (signature + active check only, NO freshness
+# check). Used internally by the freshness check below. NOT exported as the
+# default `current_active_user` because force-logout needs to be global.
+_current_active_user_no_freshness = fastapi_users.current_user(active=True)
 
 
 # --- Freshness check: rejects JWTs issued before force-logout -----------------
-# This is the ONE additional check needed for force-logout to work. We don't
-# replace current_active_user (existing endpoints stay untouched); we offer a
-# stricter alternative that admins can opt into for sensitive endpoints, AND we
-# apply it via the dependency chain in admin_deps.py for the admin namespace.
+# Defined BEFORE the public `current_active_user` re-bind below so the public
+# name (which everything imports) gets the freshness check by default. That's
+# the whole point: force-logout must be enforced everywhere, not just admin.
 
 def _extract_token(request: Request) -> Optional[str]:
     """Pull a JWT from either the Bearer header or the cookie."""
@@ -184,11 +191,8 @@ def _extract_token(request: Request) -> Optional[str]:
     return request.cookies.get("genai_auth")
 
 
-async def current_active_fresh_user(
-    request: Request,
-    user: User = Depends(current_active_user),
-) -> User:
-    """current_active_user + reject if the JWT was issued before force-logout.
+async def _check_freshness(request: Request, user: User) -> User:
+    """Reject the request if the JWT was issued before force-logout.
 
     If users.jwt_invalidated_at is set and the JWT's iat is earlier (or the
     token has no iat at all -- pre-upgrade tokens), the request is rejected
@@ -200,14 +204,12 @@ async def current_active_fresh_user(
 
     token = _extract_token(request)
     if not token:
-        # Should not happen (current_active_user already validated us), but
-        # be conservative.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired"
         )
 
     try:
-        # We trust the signature/exp check that current_active_user already
+        # We trust the signature/exp check that the inner dependency already
         # passed. Here we just need the payload to read `iat`.
         payload = pyjwt.decode(
             token,
@@ -236,6 +238,25 @@ async def current_active_fresh_user(
         )
 
     return user
+
+
+async def current_active_user(
+    request: Request,
+    user: User = Depends(_current_active_user_no_freshness),
+) -> User:
+    """Active user + JWT-freshness check (rejects force-logged-out tokens).
+
+    This is the dependency every authenticated route should use. Combines:
+      1. fastapi-users active-user check (signature, expiry, is_active)
+      2. iat-cutoff check against users.jwt_invalidated_at
+    """
+    return await _check_freshness(request, user)
+
+
+# Backward-compat alias. `current_active_fresh_user` was the name used by
+# app/core/admin_deps.py before force-logout went global. Keep the alias so
+# existing admin_deps imports stay working without edits.
+current_active_fresh_user = current_active_user
 
 
 # Backwards-compat alias.
