@@ -11,6 +11,12 @@ class SourceInfo(BaseModel):
     page: int | None = None
     snippet: str
     score: float | None = None
+    # Origin of this chunk:
+    #   "personal"       -> from the current user's own indexed documents
+    #   "knowledge_base" -> from the shared/global knowledge base (admin-curated)
+    # Default is "personal" so existing call sites that don't set this keep
+    # working unchanged.
+    origin: Literal["personal", "knowledge_base"] = "personal"
 
 
 # --- Plain RAG ---

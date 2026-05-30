@@ -19,6 +19,7 @@ export interface User {
   is_superuser: boolean;
   is_verified: boolean;
   display_name: string | null;
+  role: string;
 }
 
 export class AuthError extends Error {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, FileText } from "lucide-react";
+import { ChevronDown, FileText, BookOpen } from "lucide-react";
 import type { SourceInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -23,21 +23,48 @@ export function SourcesPanel({ sources }: { sources: SourceInfo[] }) {
       </button>
       {open && (
         <div className="border-t border-white/5 p-3 space-y-2 bg-slate-950/40">
-          {sources.map((s, i) => (
-            <div
-              key={i}
-              className="bg-slate-900/60 border border-white/5 border-l-[3px] border-l-cyan-500 rounded p-3"
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-mono text-[0.75rem] text-cyan-300 font-medium">{s.source_file}</span>
-                <span className="font-mono text-[0.65rem] text-slate-500">
-                  page {s.page ?? "?"}
-                  {s.score !== null && s.score !== undefined ? ` · score ${s.score.toFixed(2)}` : ""}
-                </span>
+          {sources.map((s, i) => {
+            const isKB = s.origin === "knowledge_base";
+            return (
+              <div
+                key={i}
+                className={cn(
+                  "bg-slate-900/60 border border-white/5 rounded p-3 border-l-[3px]",
+                  isKB ? "border-l-amber-500" : "border-l-cyan-500"
+                )}
+              >
+                <div className="flex items-center justify-between mb-1 gap-2">
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <span
+                      className={cn(
+                        "font-mono text-[0.75rem] font-medium truncate",
+                        isKB ? "text-amber-300" : "text-cyan-300"
+                      )}
+                    >
+                      {s.source_file}
+                    </span>
+                    {isKB && (
+                      <span
+                        title="From the shared knowledge base"
+                        className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.6rem] font-mono uppercase tracking-wider text-amber-200 bg-amber-500/10 border border-amber-500/30"
+                      >
+                        <BookOpen className="w-2.5 h-2.5" />
+                        KB
+                      </span>
+                    )}
+                  </span>
+                  <span className="font-mono text-[0.65rem] text-slate-500 shrink-0">
+                    {s.page != null ? `page ${s.page}` : ""}
+                    {s.page != null && s.score != null ? " · " : ""}
+                    {s.score != null ? `score ${s.score.toFixed(2)}` : ""}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-400 leading-relaxed line-clamp-3">
+                  {s.snippet}
+                </div>
               </div>
-              <div className="text-xs text-slate-400 leading-relaxed line-clamp-3">{s.snippet}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

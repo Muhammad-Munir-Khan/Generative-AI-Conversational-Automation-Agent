@@ -3,13 +3,13 @@
 import {
   Activity,
   Cloud,
-  LogOut,
   Mic,
   RefreshCcw,
+  Shield,
   Sparkles,
-  User as UserIcon,
   Volume2,
 } from "lucide-react";
+import Link from "next/link";
 
 import type { HealthResponse, Mode } from "@/lib/types";
 import type { SessionInfo } from "@/lib/api";
@@ -22,6 +22,10 @@ import { ChatList } from "./ChatList";
 import { ThemeToggle } from "./ThemeToggle";
 import { LanguageSelector } from "./LanguageSelector";
 import { DocumentManager } from "./DocumentManager";
+import { UserFooter } from "./UserFooter";
+
+const ADMIN_ROLES = ["corpus_admin", "super_admin"];
+
 export function Sidebar({
   health,
   error,
@@ -67,6 +71,10 @@ export function Sidebar({
   language: LanguageCode;
   setLanguage: (code: LanguageCode) => void;
 }) {
+  const { user } = useAuth();
+  const role = (user as { role?: string } | null)?.role ?? "user";
+  const isAdmin = ADMIN_ROLES.includes(role);
+
   return (
     <aside className="w-[280px] shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-sidebar)] px-5 py-6 sticky top-0 h-screen overflow-y-auto flex flex-col">
       <div
@@ -78,9 +86,24 @@ export function Sidebar({
       >
         ◆ Console
       </div>
-      <div className="font-mono text-[0.72rem] tracking-[0.08em] uppercase text-[var(--fg-tertiary)] mt-1 mb-6">
+      <div className="font-mono text-[0.72rem] tracking-[0.08em] uppercase text-[var(--fg-tertiary)] mt-1 mb-4">
         agent control plane
       </div>
+
+      {/* Switch to Admin Panel - top of sidebar, admins only */}
+      {isAdmin && (
+        <Link
+          href="/admin"
+          className="mb-5 flex items-center gap-2 px-3 py-2.5 rounded-md text-xs font-semibold text-white transition-all shadow-lg shadow-[var(--accent)]/20 hover:opacity-90"
+          style={{
+            background:
+              "linear-gradient(135deg, var(--accent-bright), var(--accent))",
+          }}
+        >
+          <Shield className="w-3.5 h-3.5" />
+          Switch to Admin Panel
+        </Link>
+      )}
 
       <StatusCard health={health} error={error} />
 
@@ -175,78 +198,12 @@ export function Sidebar({
       {/* Spacer pushes the user footer to the bottom of the sidebar */}
       <div className="flex-1 min-h-[1.5rem]" />
 
-      <UserFooter activeSessionId={activeSessionId} />
+      <UserFooter activeSessionId={activeSessionId} variant="chat" />
     </aside>
   );
 }
 
-/* ------------------------------ User footer ------------------------------ */
-
-function UserFooter({ activeSessionId }: { activeSessionId: string }) {
-  const { user, logout } = useAuth();
-
-  if (!user) {
-    return (
-      <div className="pt-4 border-t border-[var(--border-subtle)] text-[0.7rem] text-[var(--fg-muted)] font-mono flex items-center gap-1.5">
-        <Mic className="w-3 h-3" />
-        Voice ready · session {activeSessionId.slice(0, 6)}
-      </div>
-    );
-  }
-
-  const initial =
-    (user.display_name || user.email).trim().charAt(0).toUpperCase() || "?";
-  const displayName = user.display_name || user.email.split("@")[0];
-
-  const handleLogout = async () => {
-    await logout();
-    // AuthProvider sets user=null; useEffect in page.tsx redirects to /login.
-    window.location.href = "/login";
-  };
-
-  return (
-    <div className="pt-4 border-t border-[var(--border-subtle)]">
-      <div className="flex items-center gap-2.5 px-2 py-2 rounded-md bg-[var(--bg-card)] border border-[var(--border-subtle)]">
-        <div
-          className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0"
-          style={{
-            background:
-              "linear-gradient(135deg, var(--accent-bright), var(--accent))",
-          }}
-        >
-          {initial}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div
-            className="text-xs font-medium text-[var(--fg-primary)] truncate"
-            title={displayName}
-          >
-            {displayName}
-          </div>
-          <div
-            className="text-[0.65rem] text-[var(--fg-tertiary)] truncate"
-            title={user.email}
-          >
-            {user.email}
-          </div>
-        </div>
-        <button
-          onClick={handleLogout}
-          className="text-[var(--fg-tertiary)] hover:text-red-500 transition p-1 rounded shrink-0"
-          title="Sign out"
-        >
-          <LogOut className="w-3.5 h-3.5" />
-        </button>
-      </div>
-      <div className="mt-2 text-[0.65rem] text-[var(--fg-muted)] font-mono flex items-center gap-1.5 px-1">
-        <Mic className="w-3 h-3" />
-        Voice ready · session {activeSessionId.slice(0, 6)}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------ helpers (unchanged) --------------------- */
+/* ------------------------------ helpers --------------------- */
 
 function StatusCard({
   health,
@@ -297,8 +254,6 @@ function StatusCard({
         value={(health.tts_backend || "piper").toUpperCase()}
         mono
       />
-      {/* Indexed flag is null in Phase 2 multi-tenant world — hidden here.
-          Phase 4c will add a per-user "Documents" panel to replace it. */}
     </div>
   );
 }

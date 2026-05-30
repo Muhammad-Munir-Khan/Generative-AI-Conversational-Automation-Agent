@@ -8,7 +8,7 @@ from fastapi_users.router.oauth import generate_state_token
 from httpx_oauth.integrations.fastapi import OAuth2AuthorizeCallback
 
 from app import __version__
-from app.api import agent_routes, attachment_routes, rag_routes, voice_routes
+from app.api import agent_routes, attachment_routes, rag_routes, voice_routes, admin_routes
 from app.core.auth import (
     cookie_backend,
     current_active_user,
@@ -46,7 +46,7 @@ app.include_router(rag_routes.router)
 app.include_router(agent_routes.router)
 app.include_router(voice_routes.router)
 app.include_router(attachment_routes.router)
-
+app.include_router(admin_routes.router)
 # --- Auth routes -------------------------------------------------------------
 # Two login backends mounted under different prefixes:
 #   POST /auth/jwt/login     -> returns {access_token, token_type} JSON (for API/curl)

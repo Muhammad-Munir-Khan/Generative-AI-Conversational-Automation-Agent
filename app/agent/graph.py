@@ -46,8 +46,9 @@ log = get_logger(__name__)
 SYSTEM_PROMPT = """You are a helpful conversational assistant with access to tools.
 
 Available capabilities:
-- document_search: Look up specific facts in the user's indexed documents.
-- document_summarizer: Summarize a whole indexed file or the entire corpus.
+- document_search: Look up specific facts in the user's OWN indexed documents (their personal uploaded files).
+- document_summarizer: Summarize a whole indexed file or the entire personal corpus.
+- knowledge_base_search: Search the SHARED knowledge base (admin-curated reference material, available to everyone).
 - web_search: Search the public web for current information.
 - calculator: Evaluate arithmetic expressions (handles thousands-comma numbers).
 - json_parser: Parse JSON and extract values by dotted path.
@@ -56,19 +57,26 @@ Available capabilities:
 - currency_converter: Convert money between currencies (live ECB rates).
 - weather: Current weather and 3-day forecast for any location.
 
+Choosing between document_search and knowledge_base_search:
+- The user's OWN files / 'my document' / 'the PDF I uploaded' -> document_search.
+- Reference material the admin curated (policies, manuals, religious texts,
+  shared documentation) -> knowledge_base_search.
+- When in doubt and the question is reference-y, try knowledge_base_search;
+  if it returns nothing useful, fall back to document_search.
+
 Guidelines:
-- For specific facts from indexed docs, use document_search FIRST.
-- For an overview of a document, use document_summarizer (NOT document_search).
-- For ANY arithmetic — even simple multiplication or percentages — use calculator FIRST, then pass the numeric result to other tools.
+- For specific facts from indexed docs, prefer the matching RAG tool FIRST.
+- For an overview of a personal document, use document_summarizer (NOT document_search).
+- For ANY arithmetic - even simple multiplication or percentages - use calculator FIRST, then pass the numeric result to other tools.
 - NEVER put math expressions inside other tools' numeric arguments.
   WRONG: currency_converter(amount="0.15 * 240000", from_currency="USD", to_currency="EUR")
   RIGHT: calculator(expression="0.15 * 240000") -> returns 36000
          currency_converter(amount=36000, from_currency="USD", to_currency="EUR")
 - For web/current info not in docs, use web_search.
-- For dates, units, currency, weather — use the matching dedicated tool.
+- For dates, units, currency, weather - use the matching dedicated tool.
 - After tools, synthesize a clear, concise answer.
 - If a tool returns no useful info, say so honestly. Don't make things up.
-- Preserve any source citations from document_search in your final answer.
+- Preserve any source citations from document_search / knowledge_base_search in your final answer.
 - Keep answers focused and brief unless the user asks for detail.
 """
 
@@ -165,26 +173,94 @@ def _extract_tool_calls(messages: list[BaseMessage]) -> list[ToolCall]:
     return calls
 
 
+def _sources_from_personal(question: str) -> list[SourceInfo]:
+    """Re-run a personal-tenant retrieval for the given question.
+
+    Parallels the existing pattern: we re-issue the search to get fresh
+    (doc, score) pairs we can turn into SourceInfo. Cheap (<100ms).
+    """
+    from app.rag.retrieval import retrieve
+
+    try:
+        pairs = retrieve(question)
+    except Exception as e:
+        log.debug("_sources_from_personal failed: %s", e)
+        return []
+    return [
+        SourceInfo(
+            source_file=(d.metadata or {}).get("source_file", "unknown"),
+            page=(d.metadata or {}).get("page"),
+            snippet=d.page_content[:240],
+            score=round(s, 3) if s is not None else None,
+            origin="personal",
+        )
+        for d, s in pairs
+    ]
+
+
+def _sources_from_knowledge_base(question: str) -> list[SourceInfo]:
+    """Re-run a global-KB retrieval for the given question.
+
+    Same shape as _sources_from_personal but uses global_search. Each returned
+    SourceInfo is tagged origin="knowledge_base".
+    """
+    from app.rag.global_collection import global_search
+
+    try:
+        pairs = global_search(question, k=5)
+    except Exception as e:
+        log.debug("_sources_from_knowledge_base failed: %s", e)
+        return []
+    out: list[SourceInfo] = []
+    for d, s in pairs:
+        md = d.metadata or {}
+        # KB uses source_title (set by admin upload); page may be a string
+        # (it comes from PDF loaders as a str sometimes).
+        title = md.get("source_title") or md.get("book_title") or "unknown"
+        raw_page = md.get("page")
+        try:
+            page_val = int(raw_page) if raw_page not in (None, "", "?") else None
+        except (TypeError, ValueError):
+            page_val = None
+        out.append(
+            SourceInfo(
+                source_file=title,
+                page=page_val,
+                snippet=d.page_content[:240],
+                score=round(float(s), 3) if s is not None else None,
+                origin="knowledge_base",
+            )
+        )
+    return out
+
+
 def _extract_sources(tool_calls: list[ToolCall]) -> list[SourceInfo]:
+    """Build the final SourceInfo list from the agent's tool calls.
+
+    We re-run retrieval for the LAST question seen for each retrieval-style
+    tool, so the citations the UI shows match what the agent actually used.
+    Both personal docs (document_search) and the shared KB
+    (knowledge_base_search) are supported; results are concatenated.
+    """
+    sources: list[SourceInfo] = []
+
     last_doc_q = next(
         (tc.args.get("question") for tc in reversed(tool_calls)
          if tc.name == "document_search"),
         None,
     )
-    if not last_doc_q:
-        return []
-    from app.rag.retrieval import retrieve
+    if last_doc_q:
+        sources.extend(_sources_from_personal(last_doc_q))
 
-    pairs = retrieve(last_doc_q)
-    return [
-        SourceInfo(
-            source_file=d.metadata.get("source_file", "unknown"),
-            page=d.metadata.get("page"),
-            snippet=d.page_content[:240],
-            score=round(s, 3),
-        )
-        for d, s in pairs
-    ]
+    last_kb_q = next(
+        (tc.args.get("question") for tc in reversed(tool_calls)
+         if tc.name == "knowledge_base_search"),
+        None,
+    )
+    if last_kb_q:
+        sources.extend(_sources_from_knowledge_base(last_kb_q))
+
+    return sources
 
 
 def _maybe_generate_title(

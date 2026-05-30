@@ -12,12 +12,19 @@
  * because EventSource cannot send cookies/credentials cross-origin reliably).
  */
 import type {
+  AdminUserInfo,
   AgentResponse,
   AttachmentResponse,
+  CorpusIngestResponse,
+  CorpusItemInput,
+  CorpusSearchResponse,
+  CorpusSourceInfo,
+  CorpusStats,
   EnsembleData,
   HealthResponse,
   QueryResponse,
   StreamEvent,
+  SystemStats,
   TranscribeResponse,
 } from "./types";
 
@@ -26,12 +33,6 @@ export const API_URL =
 
 /* ------------------------------ Core helper ------------------------------ */
 
-/**
- * Centralized fetch wrapper that:
- *   1. Always sends credentials (so the httpOnly auth cookie goes with the request)
- *   2. Redirects to /login on 401 (preserving the current URL as ?next=...)
- *   3. Returns the raw Response (caller decides how to parse)
- */
 async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const res = await fetch(input, {
     ...init,
@@ -39,14 +40,13 @@ async function apiFetch(input: string, init: RequestInit = {}): Promise<Response
   });
 
   if (res.status === 401 && typeof window !== "undefined") {
-  const path = window.location.pathname;
-  // Don't redirect from public pages (landing, login, signup).
-  const isPublic =
-    path === "/" || path.startsWith("/login") || path.startsWith("/signup");
-  if (!isPublic) {
-    const next = encodeURIComponent(path + window.location.search);
-    window.location.href = `/login?next=${next}`;
-   }
+    const path = window.location.pathname;
+    const isPublic =
+      path === "/" || path.startsWith("/login") || path.startsWith("/signup");
+    if (!isPublic) {
+      const next = encodeURIComponent(path + window.location.search);
+      window.location.href = `/login?next=${next}`;
+    }
   }
   return res;
 }
@@ -108,7 +108,6 @@ export async function deleteDocument(filename: string): Promise<void> {
 }
 
 export async function reindex(): Promise<{ message: string; chunks_indexed: number }> {
-  // Phase 2c switched this to a per-user endpoint.
   const res = await apiFetch(`${API_URL}/rag/reindex`, { method: "POST" });
   if (!res.ok) throw new Error(`Reindex ${res.status}: ${await res.text()}`);
   return res.json();
@@ -153,9 +152,6 @@ export async function* streamAgent(
   body: AgentRequestBody,
   signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent, void, unknown> {
-  // NOTE: we use apiFetch here (not raw fetch) so credentials are included
-  // and 401 triggers the redirect. The streaming response body comes back
-  // as a ReadableStream just the same.
   const res = await apiFetch(`${API_URL}/agent/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -333,4 +329,241 @@ export async function ttsToBlob(
   if (!res.ok) throw new Error(`TTS ${res.status}: ${await res.text()}`);
   const mime = res.headers.get("content-type") || "audio/wav";
   return { blob: await res.blob(), mime };
+}
+
+/* =============================================================================
+ * ADMIN API  (user management + global knowledge base)
+ * All gated server-side by role (app/api/admin_routes.py).
+ * ============================================================================= */
+
+/* ------------------------------ Current user ----------------------------- */
+
+export interface MeResponse {
+  id: string;
+  email: string;
+  is_active: boolean;
+  is_superuser: boolean;
+  is_verified: boolean;
+  display_name: string | null;
+  role: string;
+}
+
+export async function getMe(): Promise<MeResponse> {
+  const res = await apiFetch(`${API_URL}/users/me`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Me ${res.status}`);
+  return res.json();
+}
+
+/* ------------------------------ Admin: users ----------------------------- */
+
+export async function adminListUsers(): Promise<AdminUserInfo[]> {
+  const res = await apiFetch(`${API_URL}/admin/users`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`List users ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function adminSetUserRole(
+  userId: string,
+  role: string,
+): Promise<AdminUserInfo> {
+  const res = await apiFetch(`${API_URL}/admin/users/${userId}/role`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* noop */
+    }
+    throw new Error(`Set role failed: ${detail}`);
+  }
+  return res.json();
+}
+
+export async function adminSetUserActive(
+  userId: string,
+  isActive: boolean,
+): Promise<AdminUserInfo> {
+  const res = await apiFetch(`${API_URL}/admin/users/${userId}/active`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ is_active: isActive }),
+  });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* noop */
+    }
+    throw new Error(`Set active failed: ${detail}`);
+  }
+  return res.json();
+}
+
+export async function adminEditUser(
+  userId: string,
+  displayName: string | null,
+): Promise<AdminUserInfo> {
+  const res = await apiFetch(`${API_URL}/admin/users/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ display_name: displayName }),
+  });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* noop */
+    }
+    throw new Error(`Edit user failed: ${detail}`);
+  }
+  return res.json();
+}
+
+export async function adminSendReset(
+  userId: string,
+): Promise<{ status: string; email: string }> {
+  const res = await apiFetch(`${API_URL}/admin/users/${userId}/send-reset`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* noop */
+    }
+    throw new Error(`Send reset failed: ${detail}`);
+  }
+  return res.json();
+}
+
+export async function adminForceLogout(
+  userId: string,
+): Promise<{ status: string; email: string; invalidated_at: string }> {
+  const res = await apiFetch(`${API_URL}/admin/users/${userId}/force-logout`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* noop */
+    }
+    throw new Error(`Force logout failed: ${detail}`);
+  }
+  return res.json();
+}
+
+/* ------------------------------ Admin: corpus ---------------------------- */
+
+export async function adminIngestCorpus(
+  items: CorpusItemInput[],
+): Promise<CorpusIngestResponse> {
+  const res = await apiFetch(`${API_URL}/admin/corpus/ingest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+  if (!res.ok) throw new Error(`Ingest ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function adminUploadCorpusFile(
+  file: File,
+  contentType = "document",
+  sourceTitle?: string,
+  author?: string,
+): Promise<CorpusIngestResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const params = new URLSearchParams({ content_type: contentType });
+  if (sourceTitle) params.set("source_title", sourceTitle);
+  if (author) params.set("author", author);
+
+  const res = await apiFetch(
+    `${API_URL}/admin/corpus/upload?${params.toString()}`,
+    { method: "POST", body: formData },
+  );
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* noop */
+    }
+    throw new Error(`File upload failed: ${detail}`);
+  }
+  return res.json();
+}
+
+// Back-compat alias for any code still calling the old name.
+export const adminUploadCorpusPdf = adminUploadCorpusFile;
+
+export async function adminCorpusStats(): Promise<CorpusStats> {
+  const res = await apiFetch(`${API_URL}/admin/corpus/stats`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Corpus stats ${res.status}`);
+  return res.json();
+}
+
+export async function adminListSources(): Promise<CorpusSourceInfo[]> {
+  const res = await apiFetch(`${API_URL}/admin/corpus/sources`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`List sources ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function adminDeleteSource(
+  sourceTitle: string,
+): Promise<{ source_title: string; deleted: number }> {
+  const params = new URLSearchParams({ source_title: sourceTitle });
+  const res = await apiFetch(
+    `${API_URL}/admin/corpus/sources?${params.toString()}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* noop */
+    }
+    throw new Error(`Delete source failed: ${detail}`);
+  }
+  return res.json();
+}
+
+export async function adminSearchCorpus(
+  query: string,
+  k = 8,
+  contentType?: string,
+  alpha = 0.5,
+): Promise<CorpusSearchResponse> {
+  const res = await apiFetch(`${API_URL}/admin/corpus/search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      k,
+      content_type: contentType,
+      alpha,
+    }),
+  });
+  if (!res.ok) throw new Error(`Search ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function adminSystemStats(): Promise<SystemStats> {
+  const res = await apiFetch(`${API_URL}/admin/stats`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`System stats ${res.status}`);
+  return res.json();
 }

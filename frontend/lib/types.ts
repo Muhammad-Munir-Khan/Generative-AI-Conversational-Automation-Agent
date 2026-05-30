@@ -20,6 +20,12 @@ export interface SourceInfo {
   page: number | null;
   snippet: string;
   score: number | null;
+  // Origin of this chunk:
+  //   "personal"       -> the user's own indexed documents
+  //   "knowledge_base" -> the shared/global knowledge base (admin-curated)
+  // Optional + default-to-personal for backward compatibility with older
+  // responses that don't include this field.
+  origin?: "personal" | "knowledge_base";
 }
 
 export interface ToolCall {
@@ -101,3 +107,85 @@ export interface TraceEntry {
 }
 
 export type Mode = "agent" | "rag";
+
+/* =============================================================================
+ * Admin types (backend: app/api/admin_routes.py)
+ * ============================================================================= */
+
+export type UserRole = "user" | "corpus_admin" | "super_admin";
+
+export interface AdminUserInfo {
+  id: string;
+  email: string;
+  role: string;
+  is_active: boolean;
+  is_verified: boolean;
+  display_name: string | null;
+  created_at: string | null;  // ISO string from backend
+}
+
+export type ContentType = "quran" | "hadith" | "tafsir" | "fiqh" | "book" | string;
+
+// Structured corpus item (mirrors CorpusItem on the backend).
+// Only `text` is required; everything else is optional metadata.
+export interface CorpusItemInput {
+  text: string;
+  content_type?: string;
+  source_title?: string;
+  language?: string;
+  scholar?: string;
+  arabic_text?: string;
+  translation?: string;
+  translator?: string;
+  surah_number?: number;
+  surah_name?: string;
+  ayah_number?: number;
+  collection?: string;
+  hadith_number?: string;
+  book_name?: string;
+  narrator_chain?: string;
+  grading?: string;
+  grading_source?: string;
+  book_title?: string;
+  author?: string;
+  madhab?: string;
+  topic?: string;
+  volume?: string;
+  page?: string;
+}
+
+export interface CorpusIngestResponse {
+  inserted: number;
+  total_in_corpus: number;
+  message: string;
+}
+
+export interface CorpusStats {
+  total: number;
+}
+
+export interface SystemStats {
+  total_users: number;
+  corpus_total: number;
+}
+
+// One source in the KB (group of chunks sharing a source_title)
+export interface CorpusSourceInfo {
+  source_title: string;
+  content_type: string;
+  chunk_count: number;
+}
+
+// One hit returned by the admin /corpus/search preview
+export interface CorpusSearchHit {
+  text: string;
+  score: number;
+  source_title: string | null;
+  content_type: string | null;
+  author: string | null;
+  page: string | null;
+}
+
+export interface CorpusSearchResponse {
+  hits: CorpusSearchHit[];
+}
