@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 from contextlib import asynccontextmanager
 
+import httpx
 import jwt as pyjwt
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi_users.jwt import decode_jwt
 from fastapi_users.router.oauth import generate_state_token
 from httpx_oauth.integrations.fastapi import OAuth2AuthorizeCallback
+from sqlalchemy import update
 
 from app import __version__
 from app.api import agent_routes, attachment_routes, rag_routes, voice_routes, admin_routes
@@ -22,9 +24,11 @@ from app.core.auth import (
     jwt_backend,
 )
 from app.core.config import settings
+from app.core.db import get_async_session
 from app.core.llm import active_model_name, active_provider
 from app.core.logging import configure_logging, get_logger
 from app.core.schemas_user import UserCreate, UserRead, UserUpdate
+from app.models.user import User
 
 configure_logging()
 log = get_logger(__name__)
@@ -48,28 +52,20 @@ async def lifespan(app: FastAPI):
     """FastAPI lifespan: pre-warm the embedder, then serve."""
     log.info("pre-warming embedding model: %s", settings.embedding_model)
     try:
-        # Import locally so a broken embeddings.py can't kill startup before
-        # we even log why - log first, then attempt.
         from app.rag.embeddings import get_embeddings
         embedder = get_embeddings()
-        # embed_query returns a list[float]; we just want the side effect
-        # of forcing the model to actually load from disk (or download).
         _ = embedder.embed_query("warmup")
         log.info(
             "embedding model ready: %s (1 warmup vector produced)",
             settings.embedding_model,
         )
     except Exception as e:
-        # We do NOT want to crash the API if embedding warm-up fails - the
-        # rest of the app (auth, admin, non-RAG chat) can still serve users.
-        # But we make it loud in logs.
         log.error(
             "embedding pre-warm FAILED for %s: %s. RAG/KB upload will "
             "trigger an on-demand download on first use.",
             settings.embedding_model, e,
         )
     yield
-    # No teardown work needed - HF model held by lru_cache, GC handles it.
 
 
 app = FastAPI(
@@ -159,8 +155,11 @@ app.include_router(
 # is a full-page redirect flow, so we need the callback to:
 #   1. Exchange the code for an access token (httpx-oauth)
 #   2. Get/create/link the user (fastapi-users user_manager.oauth_callback)
-#   3. Set the httpOnly auth cookie (cookie_backend's strategy + transport)
-#   4. 302-redirect the browser to the frontend /chat page
+#   3. Fetch the user's name from the provider userinfo endpoint and set it
+#      on the user row IF display_name is currently empty (first signup
+#      behavior - never overwrite a name the user has manually set)
+#   4. Set the httpOnly auth cookie (cookie_backend's strategy + transport)
+#   5. 302-redirect the browser to the frontend /chat page
 #
 # We reuse fastapi-users' own components (no reimplementation of OAuth or JWT
 # logic) so the security guarantees match the built-in router exactly:
@@ -194,6 +193,122 @@ _oauth_scopes = {
 }
 
 
+# --- Provider userinfo fetchers -----------------------------------------------
+# Each returns the user's preferred display name from the provider, or None if
+# we couldn't get one. Failures are non-fatal: a missing name just means the
+# user shows up with NULL display_name (status quo before this code existed).
+
+async def _fetch_google_name(access_token: str) -> str | None:
+    """Get the user's full name from Google's OIDC userinfo endpoint.
+
+    Google guarantees the `name` field on real accounts when the `profile`
+    scope was granted (we request it). Returns None on any failure.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if resp.status_code != 200:
+                log.warning(
+                    "Google userinfo failed: status=%d body=%r",
+                    resp.status_code, resp.text[:200],
+                )
+                return None
+            data = resp.json()
+            name = (data.get("name") or "").strip()
+            return name or None
+    except Exception as e:
+        log.warning("Google userinfo fetch error: %s", e)
+        return None
+
+
+async def _fetch_github_name(access_token: str) -> str | None:
+    """Get the user's preferred display name from GitHub's user endpoint.
+
+    GitHub's `name` field is the user's set display name. It can be NULL if
+    they never set one. Fall back to `login` (their @username) - it's what
+    GitHub itself shows in comments when name is empty.
+
+    Returns None if both fields are missing (rare; bot accounts mostly).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+            if resp.status_code != 200:
+                log.warning(
+                    "GitHub user fetch failed: status=%d body=%r",
+                    resp.status_code, resp.text[:200],
+                )
+                return None
+            data = resp.json()
+            # name -> login -> None
+            name = (data.get("name") or "").strip()
+            if name:
+                return name
+            login = (data.get("login") or "").strip()
+            return login or None
+    except Exception as e:
+        log.warning("GitHub user fetch error: %s", e)
+        return None
+
+
+_PROVIDER_NAME_FETCHERS = {
+    "google": _fetch_google_name,
+    "github": _fetch_github_name,
+}
+
+
+async def _maybe_set_display_name(
+    user: User, provider: str, access_token: str
+) -> None:
+    """Populate display_name from the OAuth provider on first signup.
+
+    Rules:
+      - If display_name is already set (any non-empty string), do NOT overwrite.
+        The user may have manually edited it via the profile page; their
+        choice wins.
+      - If display_name is empty/NULL, fetch from provider. If the fetch
+        returns a usable string, UPDATE the row. If it returns None, leave
+        the user with NULL display_name (status quo).
+      - Provider fetch failure is non-fatal. We log a warning and let the
+        login complete normally.
+    """
+    existing = (user.display_name or "").strip()
+    if existing:
+        return  # respect manual edits, do not clobber
+
+    fetcher = _PROVIDER_NAME_FETCHERS.get(provider)
+    if fetcher is None:
+        return  # unknown provider; nothing to do
+
+    fetched = await fetcher(access_token)
+    if not fetched:
+        return  # provider gave us nothing usable
+
+    # Write through a fresh session so we don't interfere with the user_manager
+    # session lifecycle. SQLAlchemy async sessions are cheap.
+    async for session in get_async_session():
+        await session.execute(
+            update(User).where(User.id == user.id).values(display_name=fetched)
+        )
+        await session.commit()
+        break  # generator yields one session
+
+    log.info(
+        "set display_name=%r for user %s via %s OAuth",
+        fetched, user.email, provider,
+    )
+
+
 async def _start_oauth(provider: str) -> dict:
     """Build the provider authorization URL with a signed CSRF state token."""
     client = _oauth_clients[provider]
@@ -207,7 +322,7 @@ async def _start_oauth(provider: str) -> dict:
 
 
 async def _finish_oauth(provider, request, access_token_state, user_manager):
-    """Exchange code, get/create user, set cookie, redirect to frontend."""
+    """Exchange code, get/create user, populate name, set cookie, redirect."""
     token, state = access_token_state
 
     # Verify the state token (CSRF protection) - same check the built-in does.
@@ -236,6 +351,11 @@ async def _finish_oauth(provider, request, access_token_state, user_manager):
         associate_by_email=True,
         is_verified_by_default=True,
     )
+
+    # Populate display_name from provider on FIRST signup only. If the user
+    # already has a name set (manual edit or a prior OAuth login that fetched
+    # it), this is a no-op.
+    await _maybe_set_display_name(user, provider, token["access_token"])
 
     # Suspended accounts: surface the same message OAuth users would see via
     # form login, by redirecting to login with an error query param so the
