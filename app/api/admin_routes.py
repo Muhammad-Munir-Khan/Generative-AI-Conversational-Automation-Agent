@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from fastapi_users import BaseUserManager
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
@@ -21,6 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.admin_deps import require_corpus_admin, require_super_admin
 from app.core.auth import get_user_manager
 from app.core.db import get_async_session
+from app.core.email import (
+    account_suspended_email,
+    account_unsuspended_email,
+    send_email,
+)
 from app.core.logging import get_logger
 from app.core.roles import UserRole
 from app.models.user import User
@@ -58,6 +63,10 @@ class RoleUpdateRequest(BaseModel):
 
 class ActiveUpdateRequest(BaseModel):
     is_active: bool
+    # Optional reason shown to the user in the suspension email. Free-form
+    # text. Ignored when is_active=True (unblock). We do NOT persist this -
+    # it lives only in the email body, per the v1 product decision.
+    reason: str | None = None
 
 
 class UserDetailsUpdate(BaseModel):
@@ -174,10 +183,27 @@ async def set_user_role(
 async def set_user_active(
     user_id: uuid.UUID,
     req: ActiveUpdateRequest,
+    background_tasks: BackgroundTasks,
     admin: User = Depends(require_super_admin),
     session: AsyncSession = Depends(get_async_session),
 ):
-    """Activate or deactivate a user. Super-admin only."""
+    """Block or unblock a user. Super-admin only.
+
+    On block (is_active=False):
+      - sets is_active=False
+      - sets jwt_invalidated_at=now() in the SAME UPDATE so any live session
+        dies on the next request (block implies force-logout - we don't want
+        a blocked user to keep chatting until they happen to close the tab)
+      - schedules an "account suspended" email with the optional reason
+
+    On unblock (is_active=True):
+      - sets is_active=True (jwt_invalidated_at left as-is so they don't have
+        to log in again if they happened to still be using a valid token,
+        though typically the suspension cleared it already)
+      - schedules an "account restored" email
+
+    Self-protection: an admin cannot deactivate themselves (lockout risk).
+    """
     result = await session.execute(select(User).where(User.id == user_id))
     user = result.scalars().unique().one_or_none()
     if user is None:
@@ -188,10 +214,38 @@ async def set_user_active(
             status_code=400, detail="You cannot deactivate your own account."
         )
 
-    await session.execute(
-        update(User).where(User.id == user_id).values(is_active=req.is_active)
-    )
-    await session.commit()
+    if not req.is_active:
+        # BLOCK: flip is_active AND set jwt_invalidated_at in one transaction.
+        now = datetime.now(timezone.utc)
+        await session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(is_active=False, jwt_invalidated_at=now)
+        )
+        await session.commit()
+        log.info(
+            "admin %s blocked %s (reason=%r)",
+            admin.email, user.email, (req.reason or "").strip() or None,
+        )
+        # Email asynchronously - never block the API on SMTP latency.
+        subject, html_body, text_body = account_suspended_email(req.reason)
+        background_tasks.add_task(
+            send_email, user.email, subject, html_body, text_body
+        )
+    else:
+        # UNBLOCK: just flip is_active. Don't touch jwt_invalidated_at - if it
+        # was set by the prior block, it stays set, which is correct: any
+        # pre-block JWTs are still invalid. The user gets a fresh JWT on next
+        # login.
+        await session.execute(
+            update(User).where(User.id == user_id).values(is_active=True)
+        )
+        await session.commit()
+        log.info("admin %s unblocked %s", admin.email, user.email)
+        subject, html_body, text_body = account_unsuspended_email()
+        background_tasks.add_task(
+            send_email, user.email, subject, html_body, text_body
+        )
 
     return AdminUserInfo(
         id=user.id,

@@ -50,6 +50,10 @@ export default function AdminUsersPage() {
   // confirm modal for force-logout
   const [confirmLogout, setConfirmLogout] = useState<AdminUserInfo | null>(null);
 
+  // confirm modal for block (with optional reason). Unblock is one-click.
+  const [confirmBlock, setConfirmBlock] = useState<AdminUserInfo | null>(null);
+  const [blockReason, setBlockReason] = useState("");
+
   const load = () => {
     adminListUsers()
       .then(setUsers)
@@ -114,19 +118,26 @@ export default function AdminUsersPage() {
     }
   };
 
-  const toggleActive = async (id: string, next: boolean) => {
+  const toggleActive = async (id: string, next: boolean, reason?: string) => {
     setBusyId(id);
     setError(null);
     setMenuId(null);
     try {
-      const updated = await adminSetUserActive(id, next);
+      const updated = await adminSetUserActive(id, next, reason);
       setUsers((p) => p.map((u) => (u.id === id ? updated : u)));
-      flash(next ? "User unblocked." : "User blocked.");
+      flash(next ? "User unblocked. They have been emailed." : "User blocked and signed out. They have been emailed.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setBusyId(null);
     }
+  };
+
+  const doBlock = async () => {
+    if (!confirmBlock) return;
+    await toggleActive(confirmBlock.id, false, blockReason);
+    setConfirmBlock(null);
+    setBlockReason("");
   };
 
   const openEdit = (u: AdminUserInfo) => {
@@ -342,7 +353,11 @@ export default function AdminUsersPage() {
                             label="Block user"
                             danger
                             disabled={isMe}
-                            onClick={() => toggleActive(u.id, false)}
+                            onClick={() => {
+                              setConfirmBlock(u);
+                              setBlockReason("");
+                              setMenuId(null);
+                            }}
                           />
                         ) : (
                           <MenuItem
@@ -424,6 +439,69 @@ export default function AdminUsersPage() {
                 className="px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
               >
                 {busyId === editing.id ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Block confirmation with optional reason */}
+      {confirmBlock && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          onClick={() => busyId !== confirmBlock.id && setConfirmBlock(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-6"
+          >
+            <h2 className="text-lg font-semibold text-[var(--fg-primary)]">
+              Block user?
+            </h2>
+            <p className="text-sm text-[var(--fg-secondary)] mt-2">
+              This blocks{" "}
+              <span className="text-[var(--fg-primary)] font-medium">
+                {confirmBlock.email}
+              </span>{" "}
+              and signs them out immediately. They will be emailed about
+              this. Optionally, add a reason — the reason will be
+              included in the email.
+            </p>
+
+            <label className="block mt-5">
+              <span className="text-xs font-medium text-[var(--fg-secondary)] uppercase tracking-wider">
+                Reason (optional)
+              </span>
+              <textarea
+                value={blockReason}
+                onChange={(e) => setBlockReason(e.target.value)}
+                rows={3}
+                maxLength={500}
+                placeholder="e.g. Terms of Service violation"
+                className="mt-2 w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-lg text-[var(--fg-primary)] placeholder-[var(--fg-muted)] focus:outline-none focus:border-[var(--accent)] resize-none"
+              />
+              <span className="block text-[0.65rem] text-[var(--fg-muted)] mt-1">
+                Shown to the user in the suspension email. {blockReason.length}/500
+              </span>
+            </label>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setConfirmBlock(null);
+                  setBlockReason("");
+                }}
+                disabled={busyId === confirmBlock.id}
+                className="px-4 py-2 rounded-lg text-sm text-[var(--fg-secondary)] hover:bg-[var(--bg-base)] transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={doBlock}
+                disabled={busyId === confirmBlock.id}
+                className="px-4 py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 disabled:opacity-50 transition-colors"
+              >
+                {busyId === confirmBlock.id ? "Blocking…" : "Block user"}
               </button>
             </div>
           </div>

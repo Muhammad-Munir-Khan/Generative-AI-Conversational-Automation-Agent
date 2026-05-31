@@ -6,16 +6,27 @@ import { useEffect } from "react";
 import {
   ArrowRight,
   Boxes,
+  Building2,
   Cloud,
+  Container,
   Database,
   Eye,
   FileText,
+  Gavel,
+  Globe,
+  GraduationCap,
   Github,
+  HeartPulse,
   Languages,
+  Layers,
+  LineChart,
   Lock,
   Mic,
   Network,
+  Search,
+  ShieldCheck,
   Sparkles,
+  Users,
   Wrench,
   Zap,
 } from "lucide-react";
@@ -38,6 +49,8 @@ export default function LandingPage() {
       <TopNav />
       <Hero />
       <Features />
+      <BuiltForTeams />
+      <UseCases />
       <ProviderSwitchDemo />
       <HowItWorks />
       <TechStack />
@@ -94,6 +107,12 @@ function TopNav() {
             Features
           </a>
           <a
+            href="#use-cases"
+            className="hidden md:inline text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] transition px-3 py-1.5"
+          >
+            Use cases
+          </a>
+          <a
             href="#stack"
             className="hidden md:inline text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] transition px-3 py-1.5"
           >
@@ -142,11 +161,11 @@ function Hero() {
           <div>
             <div className="inline-flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-[var(--fg-tertiary)] bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-full px-3 py-1 mb-6">
               <span className="block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Production-grade. Multi-tenant. Open architecture.
+              Self-hostable &middot; Multi-tenant &middot; Production-ready
             </div>
 
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight leading-[1.05] mb-5">
-              The conversational{" "}
+              Your own{" "}
               <span
                 className="bg-clip-text text-transparent"
                 style={{
@@ -154,16 +173,17 @@ function Hero() {
                     "linear-gradient(135deg, var(--accent-bright), var(--accent))",
                 }}
               >
-                AI platform
-              </span>{" "}
-              you can actually run.
+                AI workspace
+              </span>
+              . Your data. Your rules.
             </h1>
 
             <p className="text-base md:text-lg text-[var(--fg-secondary)] leading-relaxed mb-8 max-w-lg">
-              CloudNest is built from scratch end-to-end: RAG over your own
-              documents, tool-using agents, voice, vision, 37 languages,
-              multi-LLM ensembles. Strict per-user isolation. Switch LLM
-              providers in one config line.
+              CloudNest is a complete conversational AI platform you run
+              yourself. Per-user RAG, tool-using agents, a curated knowledge
+              base, voice, vision, and true multilingual retrieval across
+              100+ languages with BGE-M3 embeddings. Switch LLM providers
+              with one config line. Deploy with one Docker command.
             </p>
 
             <div className="flex flex-wrap gap-3">
@@ -183,8 +203,8 @@ function Hero() {
             </div>
 
             <div className="mt-10 grid grid-cols-3 gap-4 max-w-md">
-              <Stat number="9" label="agent tools" />
-              <Stat number="37" label="languages" />
+              <Stat number="10" label="agent tools" />
+              <Stat number="100+" label="languages" />
               <Stat number="3" label="LLM providers" />
             </div>
           </div>
@@ -244,14 +264,15 @@ function MockedChat() {
               U
             </div>
             <div className="flex-1 text-[var(--fg-primary)] pt-1">
-              How much would 12 AR-7 cobots cost in EUR?
+              What does our refund policy say, and how much would 12 units cost
+              with the bulk discount?
             </div>
           </div>
 
           <div className="ml-10 flex flex-wrap gap-1.5">
+            <ToolPill name="knowledge_base_search" />
             <ToolPill name="document_search" />
             <ToolPill name="calculator" />
-            <ToolPill name="currency_converter" />
           </div>
 
           <div className="flex gap-3">
@@ -266,20 +287,20 @@ function MockedChat() {
             </div>
             <div className="flex-1 pt-1">
               <div className="text-[var(--fg-primary)] leading-relaxed">
-                AR-7 units are priced at{" "}
-                <span className="font-medium">$87,500 each</span>. For 12
-                units, the total is $1,050,000, which converts to roughly{" "}
-                <span className="font-medium">&#8364;892,500</span> at today
-                rate.
+                Per the company refund policy, returns are accepted within{" "}
+                <span className="font-medium">30 days</span> of purchase. For
+                12 units at the bulk-tier price of $7,200 each, the total comes
+                to <span className="font-medium">$78,840</span> after the 8.75%
+                volume discount.
               </div>
               <div className="mt-3 flex flex-wrap gap-2 text-[0.65rem] font-mono">
                 <span className="inline-flex items-center gap-1.5 text-[var(--fg-tertiary)] bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-full px-2.5 py-1">
                   <FileText className="w-3 h-3" />
-                  sources: test.txt
+                  sources: refund_policy.pdf &middot; pricing.docx
                 </span>
                 <span className="inline-flex items-center gap-1.5 text-[var(--fg-tertiary)] bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-full px-2.5 py-1">
                   <Zap className="w-3 h-3" />
-                  1.3s
+                  1.4s
                 </span>
               </div>
             </div>
@@ -303,32 +324,52 @@ const FEATURES = [
   {
     icon: FileText,
     title: "Per-user RAG",
-    body: "Each user gets their own private Chroma collection. Upload PDFs, text, Markdown, or DOCX up to 10MB. The agent retrieves answers with file-level citations. Strict isolation - one user cannot see another user's documents, sessions, or chunks.",
+    body: "Every user gets a private Weaviate tenant. Upload PDFs, DOCX, text, or Markdown. The agent retrieves answers with file-level citations. One user cannot see another user's documents, sessions, or vector chunks - enforced at the storage layer, not just the application.",
+  },
+  {
+    icon: Layers,
+    title: "Shared knowledge base",
+    body: "A curated corpus that everyone in your workspace can read but only admins can write. Upload policies, manuals, FAQs - all employees query them through the same chat. Citations show which source came from personal documents vs the shared knowledge base.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Admin panel",
+    body: "Three-tier role system: user, corpus_admin, super_admin. Manage users, suspend accounts (with email notification + reason), reset passwords, force-logout active sessions instantly. Curate the shared knowledge base. Live system stats.",
   },
   {
     icon: Wrench,
-    title: "9 production tools",
-    body: "RAG search, document summarizer, web search, calculator (with thousands-separator parsing), sandboxed Python REPL, CSV reader, JSON parser, datetime helper, unit converter, currency converter (live ECB rates), live weather.",
+    title: "10 agent tools",
+    body: "Personal document search, shared knowledge base search, document summarizer, web search, calculator, JSON parser, datetime helper, unit converter, currency converter (live ECB rates), live weather. Powered by a LangGraph ReAct loop.",
   },
   {
     icon: Sparkles,
     title: "Multi-LLM ensemble",
-    body: "Fan out the same question to 3 models in parallel, then a judge model ranks them and synthesizes the best answer. Real model comparison with explainable rankings, not vibes.",
+    body: "Fan out a question to three different models in parallel, then a judge model ranks them and synthesizes the best answer. Real model comparison with explainable rankings - useful when accuracy matters more than latency.",
   },
   {
     icon: Eye,
     title: "Vision + voice",
-    body: "Vision model (Llama-4 Scout 17B via Groq) reads images and scanned PDFs when text extraction falls short. Whisper STT for speech-to-text. Edge TTS for high-quality multilingual voice output.",
+    body: "Vision model reads images and scanned PDFs when text extraction falls short. Whisper for speech-to-text. Edge TTS for multilingual voice output with native voices across 37 languages.",
+  },
+  {
+    icon: Globe,
+    title: "Multilingual retrieval",
+    body: "Powered by BAAI/bge-m3, a state-of-the-art multilingual embedding model with first-class support for 100+ languages including Urdu, Arabic, Bengali, Hindi, Chinese, Russian, French, Spanish, Swahili and more. Upload a manual in one language, query it in another - retrieval works cross-lingually because the embeddings share semantic space across languages.",
   },
   {
     icon: Languages,
-    title: "37 languages",
-    body: "From English to Urdu to Swahili. The agent responds in your chosen language with a matched native TTS voice. Tool outputs (numbers, currency, dates) translate to fit the conversation naturally.",
+    title: "Voice in 37 languages",
+    body: "The agent responds in the user's chosen language with a matched native TTS voice across 37 locales. Tool outputs (numbers, currency, dates) translate naturally into the conversation. Whisper handles speech-to-text on the way in.",
   },
   {
     icon: Lock,
-    title: "Real auth and isolation",
-    body: "JWT plus httpOnly cookies (XSS-resistant). Postgres-backed user accounts with per-user chat sessions, documents, and vector stores. Two users sharing the same backend never see each other's anything.",
+    title: "Production-ready security",
+    body: "JWT plus httpOnly cookies (XSS-resistant). OAuth via Google and GitHub. Force-logout invalidates active sessions on the very next request, globally - not just /admin. Account suspension with audit-trail-friendly admin logging.",
+  },
+  {
+    icon: LineChart,
+    title: "Built-in observability",
+    body: "Every agent run is traced via Langfuse: tool calls, latencies, tokens, costs. Filter by user, by session. Debug bad answers by replaying the exact tool tree the agent followed.",
   },
 ];
 
@@ -391,6 +432,252 @@ function FeatureCard({
   );
 }
 
+function BuiltForTeams() {
+  return (
+    <section className="py-20 md:py-28 border-t border-[var(--border-subtle)] bg-[var(--bg-sidebar)]/30">
+      <div className="max-w-6xl mx-auto px-6">
+        <div className="grid md:grid-cols-2 gap-12 items-center">
+          <div className="order-2 md:order-1 relative">
+            <div
+              className="absolute inset-0 rounded-2xl opacity-20 blur-2xl"
+              style={{
+                background:
+                  "linear-gradient(135deg, var(--accent-bright), var(--accent))",
+              }}
+            />
+            <div className="relative bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border-subtle)] bg-[var(--bg-sidebar)]">
+                <ShieldCheck className="w-3.5 h-3.5 text-[var(--accent)]" />
+                <span className="text-[0.7rem] font-mono text-[var(--fg-tertiary)]">
+                  Admin / Users
+                </span>
+              </div>
+              <div className="p-5 text-sm space-y-3">
+                <AdminRow
+                  email="alice@acme.com"
+                  role="super_admin"
+                  status="active"
+                />
+                <AdminRow
+                  email="bob@acme.com"
+                  role="corpus_admin"
+                  status="active"
+                />
+                <AdminRow
+                  email="charlie@acme.com"
+                  role="user"
+                  status="active"
+                />
+                <AdminRow
+                  email="ex.contractor@acme.com"
+                  role="user"
+                  status="suspended"
+                />
+                <div className="pt-2 border-t border-[var(--border-subtle)] text-[0.65rem] font-mono text-[var(--fg-tertiary)] flex flex-wrap gap-3">
+                  <span>&rarr; suspend (with reason + email)</span>
+                  <span>&rarr; force-logout</span>
+                  <span>&rarr; send reset link</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="order-1 md:order-2">
+            <div className="text-xs font-mono uppercase tracking-wider text-[var(--accent)] mb-3">
+              Built for teams
+            </div>
+            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">
+              Real user management, not a settings page.
+            </h2>
+            <p className="text-[var(--fg-secondary)] leading-relaxed mb-6">
+              CloudNest ships with the admin tooling most internal AI projects
+              never bother to build. Onboard users, define roles, curate what
+              the AI knows about your company, and shut down a compromised
+              account before someone gets a chance to misuse it.
+            </p>
+            <ul className="space-y-3 text-sm text-[var(--fg-secondary)]">
+              <li className="flex items-start gap-2">
+                <Users className="w-4 h-4 text-[var(--accent)] mt-0.5 shrink-0" />
+                <span>
+                  <span className="font-medium text-[var(--fg-primary)]">
+                    Three-tier roles.
+                  </span>{" "}
+                  Regular users, corpus admins who manage the shared knowledge
+                  base, and super admins who manage everything.
+                </span>
+              </li>
+              <li className="flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 text-[var(--accent)] mt-0.5 shrink-0" />
+                <span>
+                  <span className="font-medium text-[var(--fg-primary)]">
+                    Suspend with one click.
+                  </span>{" "}
+                  Block an account, force-logout active sessions instantly, and
+                  email the user a clear reason. Unblock is just as fast.
+                </span>
+              </li>
+              <li className="flex items-start gap-2">
+                <Search className="w-4 h-4 text-[var(--accent)] mt-0.5 shrink-0" />
+                <span>
+                  <span className="font-medium text-[var(--fg-primary)]">
+                    Curate the knowledge base.
+                  </span>{" "}
+                  Drag in PDFs and manuals. Preview retrieval with hybrid
+                  search before users see it. Delete sources cleanly.
+                </span>
+              </li>
+              <li className="flex items-start gap-2">
+                <LineChart className="w-4 h-4 text-[var(--accent)] mt-0.5 shrink-0" />
+                <span>
+                  <span className="font-medium text-[var(--fg-primary)]">
+                    Observe everything.
+                  </span>{" "}
+                  Every agent run is traced. Inspect tool calls, latencies,
+                  token usage. Debug bad answers with full reproducibility.
+                </span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AdminRow({
+  email,
+  role,
+  status,
+}: {
+  email: string;
+  role: string;
+  status: "active" | "suspended";
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[var(--fg-primary)] truncate flex-1">{email}</span>
+      <span className="text-[0.65rem] font-mono px-2 py-0.5 rounded bg-[var(--bg-base)] border border-[var(--border-subtle)] text-[var(--fg-secondary)] shrink-0">
+        {role}
+      </span>
+      <span
+        className={`text-[0.65rem] font-mono px-2 py-0.5 rounded shrink-0 ${
+          status === "active"
+            ? "text-emerald-500 bg-emerald-500/10 border border-emerald-500/30"
+            : "text-red-500 bg-red-500/10 border border-red-500/30"
+        }`}
+      >
+        {status}
+      </span>
+    </div>
+  );
+}
+
+const USE_CASES = [
+  {
+    icon: Building2,
+    title: "Internal company AI",
+    body: "Give every employee an AI assistant that already knows your company's policies, SOPs, product documentation, and pricing. Each person also gets a private space for their own working documents. No shared chats, no leaked drafts.",
+    tags: ["Operations", "HR", "Sales enablement"],
+  },
+  {
+    icon: HeartPulse,
+    title: "Regulated industries",
+    body: "Healthcare, legal, finance - any vertical where your data cannot leave your perimeter. Self-host on your own VPC. Use Ollama for fully local inference. CloudNest does not phone home; the only outbound calls are the ones your config tells it to make.",
+    tags: ["HIPAA-aware", "On-prem", "Air-gapped friendly"],
+  },
+  {
+    icon: GraduationCap,
+    title: "Universities and research",
+    body: "Each student or researcher gets their own RAG corpus for course notes, papers, and personal references. Faculty curates a shared knowledge base of textbooks, syllabi, and lab documentation. 37 languages including Urdu, Arabic, Bengali, Hindi.",
+    tags: ["EdTech", "Multilingual", "Per-user privacy"],
+  },
+  {
+    icon: Gavel,
+    title: "Law firms and consultancies",
+    body: "Upload case files, contracts, and prior memos to a partner's private workspace. Cite the exact filename and page in answers. Use the ensemble feature to compare how different models interpret an ambiguous clause.",
+    tags: ["Citation-grade", "Confidentiality"],
+  },
+  {
+    icon: Boxes,
+    title: "Customer support copilot",
+    body: "Load your product manuals, troubleshooting guides, and policy documents into the shared knowledge base. Every agent in your support team gets fast, citation-backed answers without sending customer data to a third-party AI.",
+    tags: ["CX", "Internal tooling"],
+  },
+  {
+    icon: GraduationCap,
+    title: "Training and onboarding",
+    body: "Drop your onboarding handbook, role-specific playbooks, and historical training material into the knowledge base. New hires ask questions and get back grounded answers with sources they can verify.",
+    tags: ["L&D", "Knowledge management"],
+  },
+];
+
+function UseCases() {
+  return (
+    <section
+      id="use-cases"
+      className="py-20 md:py-28 border-t border-[var(--border-subtle)]"
+    >
+      <div className="max-w-6xl mx-auto px-6">
+        <div className="text-center mb-14">
+          <div className="text-xs font-mono uppercase tracking-wider text-[var(--accent)] mb-3">
+            Where teams use it
+          </div>
+          <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
+            One platform. Many shapes.
+          </h2>
+          <p className="text-[var(--fg-secondary)] mt-3 max-w-xl mx-auto">
+            The same architecture - per-user isolation, shared knowledge base,
+            switchable LLM providers - fits a wide range of organizational
+            needs. Pick the deployment that matches your trust requirements.
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {USE_CASES.map((u) => (
+            <UseCaseCard key={u.title} {...u} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function UseCaseCard({
+  icon: Icon,
+  title,
+  body,
+  tags,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  body: string;
+  tags: string[];
+}) {
+  return (
+    <div className="group relative p-6 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--accent)]/30 transition flex flex-col">
+      <div className="w-10 h-10 rounded-lg flex items-center justify-center mb-4 bg-[var(--accent-soft)] border border-[var(--border-subtle)]">
+        <Icon className="w-5 h-5 text-[var(--accent)]" />
+      </div>
+      <h3 className="text-base font-semibold text-[var(--fg-primary)] mb-2">
+        {title}
+      </h3>
+      <p className="text-sm text-[var(--fg-secondary)] leading-relaxed flex-1">
+        {body}
+      </p>
+      <div className="mt-4 flex flex-wrap gap-1.5">
+        {tags.map((t) => (
+          <span
+            key={t}
+            className="text-[0.65rem] font-mono px-2 py-0.5 rounded bg-[var(--bg-base)] border border-[var(--border-subtle)] text-[var(--fg-tertiary)]"
+          >
+            {t}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ProviderSwitchDemo() {
   return (
     <section className="py-20 md:py-28 border-t border-[var(--border-subtle)]">
@@ -398,17 +685,17 @@ function ProviderSwitchDemo() {
         <div className="grid md:grid-cols-2 gap-12 items-center">
           <div>
             <div className="text-xs font-mono uppercase tracking-wider text-[var(--accent)] mb-3">
-              Provider abstraction
+              No vendor lock-in
             </div>
             <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">
               Switch LLMs in one line.
             </h2>
             <p className="text-[var(--fg-secondary)] leading-relaxed mb-6">
-              CloudNest is built against a provider abstraction, not a vendor
-              lock-in. Today you can run on Groq for raw speed, OpenRouter for
-              access to Claude, GPT-4 and Gemini through one key, or Ollama for
-              fully local inference. Tomorrow when a new provider ships, it is
-              one branch in the LLM factory.
+              CloudNest is built against a provider abstraction. Today you can
+              run on Groq for raw speed, OpenRouter for access to Claude, GPT-4
+              and Gemini through one key, or Ollama for fully local inference.
+              Tomorrow when a new provider ships, it is one branch in the LLM
+              factory.
             </p>
             <ul className="space-y-2 text-sm text-[var(--fg-secondary)]">
               <li className="flex items-start gap-2">
@@ -492,18 +779,18 @@ function ProviderSwitchDemo() {
 const STEPS = [
   {
     n: "01",
-    title: "Sign up",
-    body: "Email plus password. Get your own private workspace with isolated documents, sessions, and vector store.",
+    title: "Deploy in minutes",
+    body: "One docker-compose command brings up the full stack: API, Postgres, Weaviate, and the Next.js frontend. Run it on your laptop, your VPC, or your own bare-metal server.",
   },
   {
     n: "02",
-    title: "Upload your docs",
-    body: "Drop PDFs, text, Markdown, or DOCX. Files are chunked, embedded with BGE, and indexed into your private collection.",
+    title: "Onboard your team",
+    body: "Invite users. Assign roles. Curate the shared knowledge base with policies, manuals, and reference docs. Every user also gets their own private document space.",
   },
   {
     n: "03",
     title: "Ask anything",
-    body: "The agent reads your docs, calls tools, runs Python, searches the web, sees images, and answers with sources.",
+    body: "Your team starts using AI immediately. The agent reads your docs, calls tools, searches the web, sees images, and answers with sources - across 100+ languages with cross-lingual retrieval.",
   },
 ];
 
@@ -555,40 +842,56 @@ const STACK = [
   },
   {
     icon: Database,
-    label: "Postgres + Chroma",
-    desc: "users, sessions, per-user vector stores",
+    label: "Postgres + Weaviate",
+    desc: "users, sessions, multi-tenant vector stores",
+  },
+  {
+    icon: Globe,
+    label: "BAAI/bge-m3 embeddings",
+    desc: "1024-dim multilingual vectors covering 100+ languages",
   },
   {
     icon: Cloud,
     label: "Groq / OpenRouter / Ollama",
-    desc: "3 providers, switchable in one config line",
+    desc: "3 LLM providers, switchable in one config line",
   },
   {
     icon: Eye,
-    label: "Vision: Llama-4 Scout 17B",
-    desc: "image and scanned-PDF understanding via Groq",
+    label: "Vision + voice",
+    desc: "Llama-4 Scout for images, Whisper for STT, Edge for TTS",
   },
   {
-    icon: Mic,
-    label: "Voice: Whisper + Edge TTS",
-    desc: "faster-whisper for STT, Edge for multilingual TTS",
+    icon: LineChart,
+    label: "Langfuse tracing",
+    desc: "every agent run captured with full tool tree",
+  },
+  {
+    icon: Container,
+    label: "Docker-native",
+    desc: "single docker-compose for the full stack",
   },
   {
     icon: Boxes,
     label: "Next.js 15 + Tailwind",
     desc: "streaming UI, dark/light themes, mobile-friendly",
   },
+  {
+    icon: Lock,
+    label: "fastapi-users + Alembic",
+    desc: "JWT + httpOnly cookies, OAuth, migrations",
+  },
 ];
 
 const UNDER_THE_HOOD = [
   "httpOnly cookie auth + Bearer JWT (dual transport)",
-  "Two SQLAlchemy engines (no event-loop pool collisions)",
   "Streaming responses via SSE with live tool traces",
-  "Per-user Chroma collections named by user UUID",
-  "Persistent background event loop for sync/async bridging",
-  "Defensive tool schemas (LLM type-coercion failsafe)",
+  "Per-user Weaviate tenants enforced at the storage layer",
+  "Global force-logout via JWT iat-cutoff checks",
+  "Account suspension with email notifications + reason",
+  "Hybrid retrieval (BM25 + vector) merged across personal + shared corpora",
+  "Cross-lingual semantic search via BGE-M3 (Urdu query -> English docs works)",
   "Auto-generated chat titles via background worker",
-  "fastapi-users with Alembic migrations",
+  "Multi-tenant Postgres with Alembic migrations",
 ];
 
 function TechStack() {
@@ -606,12 +909,12 @@ function TechStack() {
             Honest engineering choices.
           </h2>
           <p className="text-[var(--fg-secondary)] mt-3 max-w-xl mx-auto">
-            No magic. No black boxes. Just well-understood components wired
+            No magic. No black boxes. Well-understood components wired
             carefully and tested end-to-end.
           </p>
         </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {STACK.map((s) => {
             const Icon = s.icon;
             return (
@@ -661,26 +964,29 @@ function FinalCTA() {
       />
       <div className="relative max-w-3xl mx-auto px-6 text-center">
         <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">
-          Ready to talk to your data?
+          Your AI. Your infrastructure. Your data.
         </h2>
         <p className="text-[var(--fg-secondary)] mb-8 max-w-md mx-auto">
-          Create an account in seconds. Upload a document. Ask the first
-          question.
+          Try the hosted demo, or clone the repo and run the full stack on
+          your own machine in minutes.
         </p>
         <div className="flex flex-wrap gap-3 justify-center">
           <Link
             href="/signup"
             className="inline-flex items-center gap-2 px-6 py-3 rounded-md bg-[var(--accent)] hover:bg-[var(--accent-bright)] text-white text-sm font-medium transition shadow-lg shadow-[var(--accent)]/20"
           >
-            Get started for free
+            Try the demo
             <ArrowRight className="w-4 h-4" />
           </Link>
-          <Link
-            href="/login"
+          <a
+            href="https://github.com/Muhammad-Munir-Khan/Generative-AI-Conversational-Automation-Agent"
+            target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-6 py-3 rounded-md border border-[var(--border-subtle)] hover:border-[var(--accent)]/40 text-[var(--fg-primary)] text-sm font-medium transition"
           >
-            Sign in
-          </Link>
+            <Github className="w-4 h-4" />
+            View on GitHub
+          </a>
         </div>
       </div>
     </section>
@@ -716,7 +1022,7 @@ function SiteFooter() {
           </a>
           <span className="text-[var(--border-subtle)]">|</span>
           <span className="font-mono">
-            FastAPI / Next.js / Postgres / Chroma
+            FastAPI / Next.js / Postgres / Weaviate / Docker
           </span>
         </div>
       </div>

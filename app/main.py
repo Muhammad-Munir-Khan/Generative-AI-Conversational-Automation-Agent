@@ -1,8 +1,10 @@
 """FastAPI application entry point."""
+from contextlib import asynccontextmanager
+
 import jwt as pyjwt
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi_users.jwt import decode_jwt
 from fastapi_users.router.oauth import generate_state_token
 from httpx_oauth.integrations.fastapi import OAuth2AuthorizeCallback
@@ -10,6 +12,7 @@ from httpx_oauth.integrations.fastapi import OAuth2AuthorizeCallback
 from app import __version__
 from app.api import agent_routes, attachment_routes, rag_routes, voice_routes, admin_routes
 from app.core.auth import (
+    AccountSuspendedError,
     cookie_backend,
     current_active_user,
     fastapi_users,
@@ -20,15 +23,60 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.llm import active_model_name, active_provider
-from app.core.logging import configure_logging
+from app.core.logging import configure_logging, get_logger
 from app.core.schemas_user import UserCreate, UserRead, UserUpdate
 
 configure_logging()
+log = get_logger(__name__)
+
+
+# --- Startup pre-warm ---------------------------------------------------------
+# BGE-M3 is ~2.2GB on first download. Without pre-warming, the FIRST user
+# request that needs embeddings (upload, RAG query) sits silently while the
+# model downloads from HuggingFace - looks like the system is broken.
+#
+# We embed one dummy string at startup so:
+#   1. The download happens during container boot (visible in logs)
+#   2. The model lives in get_embeddings()'s lru_cache for the container's life
+#   3. The first real user request answers in normal time
+#
+# If the model is already cached on disk (subsequent container restarts), this
+# adds ~1 second to startup - acceptable.
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan: pre-warm the embedder, then serve."""
+    log.info("pre-warming embedding model: %s", settings.embedding_model)
+    try:
+        # Import locally so a broken embeddings.py can't kill startup before
+        # we even log why - log first, then attempt.
+        from app.rag.embeddings import get_embeddings
+        embedder = get_embeddings()
+        # embed_query returns a list[float]; we just want the side effect
+        # of forcing the model to actually load from disk (or download).
+        _ = embedder.embed_query("warmup")
+        log.info(
+            "embedding model ready: %s (1 warmup vector produced)",
+            settings.embedding_model,
+        )
+    except Exception as e:
+        # We do NOT want to crash the API if embedding warm-up fails - the
+        # rest of the app (auth, admin, non-RAG chat) can still serve users.
+        # But we make it loud in logs.
+        log.error(
+            "embedding pre-warm FAILED for %s: %s. RAG/KB upload will "
+            "trigger an on-demand download on first use.",
+            settings.embedding_model, e,
+        )
+    yield
+    # No teardown work needed - HF model held by lru_cache, GC handles it.
+
 
 app = FastAPI(
     title="GenAI Conversational Automation Agent",
     description="RAG + Agent + Voice. Multi-tenant, Postgres-backed.",
     version=__version__,
+    lifespan=lifespan,
 )
 
 # IMPORTANT: when allow_credentials=True, allow_origins cannot be ["*"].
@@ -40,6 +88,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# --- Exception handlers ------------------------------------------------------
+
+@app.exception_handler(AccountSuspendedError)
+async def _handle_account_suspended(request: Request, exc: AccountSuspendedError):
+    """Login attempt by a user whose is_active=False.
+
+    Raised from UserManager.authenticate when the password is correct but the
+    account is suspended. We deliberately do NOT include the admin-set reason
+    here - the reason was already sent to the user by email at block time.
+    Keeping it out of the API response means automated probes (and
+    rate-limited brute-force tooling) can't enumerate suspension reasons.
+    """
+    return JSONResponse(
+        status_code=403,
+        content={
+            "detail": (
+                "Your account has been suspended. Check your email for "
+                "details, or contact your administrator."
+            )
+        },
+    )
+
 
 # --- Application routes ------------------------------------------------------
 app.include_router(rag_routes.router)
@@ -165,8 +237,19 @@ async def _finish_oauth(provider, request, access_token_state, user_manager):
         is_verified_by_default=True,
     )
 
+    # Suspended accounts: surface the same message OAuth users would see via
+    # form login, by redirecting to login with an error query param so the
+    # existing red banner can show it (a 403 here would just land on a blank
+    # backend error page since this is a browser redirect flow).
     if not user.is_active:
-        raise HTTPException(status_code=400, detail="User account is inactive.")
+        return RedirectResponse(
+            url=(
+                f"{settings.frontend_url}/login"
+                "?error=Your%20account%20has%20been%20suspended."
+                "%20Check%20your%20email%20for%20details."
+            ),
+            status_code=302,
+        )
 
     # Issue the auth cookie via the cookie backend's strategy, attached to a
     # redirect to the frontend. Cookie attributes are read from the transport

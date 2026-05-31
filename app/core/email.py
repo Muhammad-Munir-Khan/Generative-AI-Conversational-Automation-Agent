@@ -1,7 +1,7 @@
-"""Email sending — swappable behind a single send_email() function.
+"""Email sending - swappable behind a single send_email() function.
 
 Current implementation: SMTP (Gmail or any SMTP server). To switch to
-Resend/SES/etc. later, replace the body of send_email() — nothing else in
+Resend/SES/etc. later, replace the body of send_email() - nothing else in
 the app needs to change.
 
 SMTP is blocking (smtplib), so we run it in a threadpool via asyncio so it
@@ -120,6 +120,7 @@ def password_reset_email(reset_link: str) -> tuple[str, str, str]:
 
     return subject, html_body, text_body
 
+
 def password_changed_email(when: str) -> tuple[str, str, str]:
     """Return (subject, html_body, text_body) confirming a password change.
 
@@ -160,6 +161,126 @@ def password_changed_email(when: str) -> tuple[str, str, str]:
         <p style="font-size:13px;line-height:1.6;color:#fca5a5;margin:0;">
           If you did NOT make this change, your account may be compromised.
           Reset your password immediately and contact support.
+        </p>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:11px;color:#4b5563;margin:20px 0;">
+      CloudNest.ai &middot; Conversational AI platform
+    </p>
+  </div>
+</body>
+</html>"""
+
+    return subject, html_body, text_body
+
+
+def _escape_html(s: str) -> str:
+    """Minimal HTML escape for arbitrary text dropped into email bodies."""
+    return (
+        s.replace("&", "&amp;")
+         .replace("<", "&lt;")
+         .replace(">", "&gt;")
+         .replace('"', "&quot;")
+         .replace("'", "&#39;")
+    )
+
+
+def account_suspended_email(reason: str | None = None) -> tuple[str, str, str]:
+    """Return (subject, html_body, text_body) notifying a user their account
+    has been suspended by an administrator.
+
+    `reason` is optional, free-form text the admin entered. We render it inline
+    but escape it - admin-typed strings should never be allowed to break out
+    of HTML context.
+    """
+    subject = "Your CloudNest account has been suspended"
+
+    reason_clean = (reason or "").strip()
+
+    if reason_clean:
+        text_body = (
+            "Your CloudNest account has been suspended by an administrator.\n\n"
+            f"Reason: {reason_clean}\n\n"
+            "While suspended, you cannot log in or use CloudNest services.\n\n"
+            "If you believe this was done in error, please reply to this "
+            "email or contact your administrator."
+        )
+    else:
+        text_body = (
+            "Your CloudNest account has been suspended by an administrator.\n\n"
+            "While suspended, you cannot log in or use CloudNest services.\n\n"
+            "If you believe this was done in error, please reply to this "
+            "email or contact your administrator."
+        )
+
+    reason_html_block = ""
+    if reason_clean:
+        reason_html_block = f"""
+      <div style="background:#1f2430;border:1px solid #262b36;border-radius:8px;padding:14px 16px;margin:16px 0;">
+        <p style="font-size:12px;line-height:1.4;color:#6b7280;margin:0 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Reason</p>
+        <p style="font-size:14px;line-height:1.6;color:#e5e7eb;margin:0;white-space:pre-wrap;">{_escape_html(reason_clean)}</p>
+      </div>"""
+
+    html_body = f"""\
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#0f1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="max-width:480px;margin:40px auto;padding:0 20px;">
+    <div style="background:#171a21;border:1px solid #262b36;border-radius:16px;padding:36px;">
+      <div style="font-size:20px;font-weight:700;color:#22d3ee;margin-bottom:8px;">
+        CloudNest<span style="color:#6b7280;font-size:14px;">.ai</span>
+      </div>
+      <h1 style="font-size:20px;color:#f3f4f6;margin:24px 0 12px;">Your account has been suspended</h1>
+      <p style="font-size:14px;line-height:1.6;color:#9ca3af;margin:0 0 16px;">
+        An administrator has suspended your CloudNest account. While suspended,
+        you cannot log in or use CloudNest services.
+      </p>{reason_html_block}
+      <div style="background:#1f2430;border:1px solid #3b2530;border-radius:8px;padding:14px 16px;margin:16px 0;">
+        <p style="font-size:13px;line-height:1.6;color:#fca5a5;margin:0;">
+          If you believe this was done in error, please reply to this email
+          or contact your administrator.
+        </p>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:11px;color:#4b5563;margin:20px 0;">
+      CloudNest.ai &middot; Conversational AI platform
+    </p>
+  </div>
+</body>
+</html>"""
+
+    return subject, html_body, text_body
+
+
+def account_unsuspended_email() -> tuple[str, str, str]:
+    """Return (subject, html_body, text_body) notifying a user their account
+    has been restored.
+    """
+    subject = "Your CloudNest account has been restored"
+
+    text_body = (
+        "Good news - your CloudNest account has been restored. You can now "
+        "log in and use CloudNest services as normal.\n\n"
+        "If you have any questions, contact your administrator."
+    )
+
+    html_body = f"""\
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#0f1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="max-width:480px;margin:40px auto;padding:0 20px;">
+    <div style="background:#171a21;border:1px solid #262b36;border-radius:16px;padding:36px;">
+      <div style="font-size:20px;font-weight:700;color:#22d3ee;margin-bottom:8px;">
+        CloudNest<span style="color:#6b7280;font-size:14px;">.ai</span>
+      </div>
+      <h1 style="font-size:20px;color:#f3f4f6;margin:24px 0 12px;">Your account has been restored</h1>
+      <p style="font-size:14px;line-height:1.6;color:#9ca3af;margin:0 0 16px;">
+        Good news &mdash; your CloudNest account has been restored. You can now
+        log in and use CloudNest services as normal.
+      </p>
+      <div style="background:#1f2430;border:1px solid #1f3a2a;border-radius:8px;padding:14px 16px;margin:16px 0;">
+        <p style="font-size:13px;line-height:1.6;color:#86efac;margin:0;">
+          If you have any questions, contact your administrator.
         </p>
       </div>
     </div>

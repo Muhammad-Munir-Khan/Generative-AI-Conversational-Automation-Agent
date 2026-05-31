@@ -1,10 +1,10 @@
 # CloudNest.ai
 
-> The conversational AI platform you can actually run.
+> Your own AI workspace. Your data. Your rules.
 
-A multi-tenant conversational AI platform built end-to-end. Combines per-user retrieval-augmented generation, a 9-tool agent loop, multi-LLM consensus mode, voice in/out, vision, multilingual support across 37 languages, and a streaming Next.js frontend. Switches between Groq, OpenRouter, and Ollama through one config line.
+A self-hostable, multi-tenant conversational AI platform built end-to-end. Combines per-user retrieval-augmented generation, a shared admin-curated knowledge base, a 10-tool agent loop, multi-LLM consensus mode, voice in/out, vision, true multilingual retrieval across 100+ languages, a real admin panel, and a streaming Next.js frontend. Switches between Groq, OpenRouter, and Ollama through one config line. Deploys with one Docker command.
 
-> **Stack:** FastAPI · LangGraph · LangChain · PostgreSQL · Chroma · BGE embeddings · faster-whisper · Edge TTS · Next.js 15 · Tailwind · fastapi-users
+> **Stack:** FastAPI · LangGraph · LangChain · PostgreSQL · Weaviate · BGE-M3 embeddings · faster-whisper · Edge TTS · Next.js 15 · Tailwind · fastapi-users · Langfuse · Docker
 >
 > **Three swappable LLM providers.** Groq for raw speed, OpenRouter for access to ~100 commercial models (Claude, GPT-4, Gemini), or Ollama for fully local inference. One `.env` line picks the active backend.
 
@@ -12,16 +12,22 @@ A multi-tenant conversational AI platform built end-to-end. Combines per-user re
 
 ## What it does
 
-- **Per-user document Q&A with real citations.** Each user gets their own private Chroma collection. Upload PDFs, images, TXT, MD, or DOCX through the UI — every answer surfaces source filenames, page numbers, and similarity scores so you can verify rather than trust.
-- **9-tool agent loop.** A LangGraph ReAct agent decides per turn whether to search documents, search the web, do math, convert units or currency, fetch weather, or just answer.
+- **Per-user document Q&A with real citations.** Every user gets a private Weaviate tenant. Upload PDFs, images, TXT, MD, or DOCX through the UI — every answer surfaces source filenames, page numbers, and similarity scores so you can verify rather than trust.
+- **Shared knowledge base curated by admins.** Upload company policies, product manuals, FAQs once. Every user queries them through the same chat. Citations show which source came from personal documents vs the shared knowledge base, rendered with distinct visual badges.
+- **Real admin panel.** Three-tier role system (user / corpus_admin / super_admin). Manage users, suspend accounts (with optional reason emailed to the user), reset passwords, force-logout active sessions instantly. Curate the shared knowledge base with file uploads and hybrid-search preview. Live system stats.
+- **10-tool agent loop.** A LangGraph ReAct agent decides per turn whether to search the user's documents, search the shared knowledge base, search the web, do math, parse JSON, work with dates, convert units or currency, fetch weather, or just answer.
+- **Multilingual retrieval (100+ languages).** Powered by `BAAI/bge-m3`, a state-of-the-art multilingual embedding model. Upload a manual in English, query it in Urdu — cross-lingual retrieval works because the embeddings share semantic space across languages.
 - **Multi-LLM consensus mode.** Toggle on to fan a single query out to **3 different models in parallel**. A 4th model judges the responses, ranks them with reasoning, and synthesizes a final verdict. Works on either Groq or OpenRouter — picks the active provider automatically.
-- **Streaming with live agent trace.** SSE-based token streaming. Tool calls appear in a vertical timeline as they execute (`document_search` → `calculator` → `currency_converter`), each transitioning from `running` to `done` in real time.
-- **Real multi-tenant auth & isolation.** JWT + httpOnly cookies (XSS-resistant). Postgres-backed user accounts. Per-user sessions, messages, documents, and vector collections. Two users on the same backend never see each other's data — enforced at the database, vector store, API, and agent context layers.
-- **Voice in / voice out.** faster-whisper for STT, Microsoft Edge neural voices for TTS. One-tap mic button. Matched native voices for every supported language.
+- **Streaming with live agent trace.** SSE-based token streaming. Tool calls appear in a vertical timeline as they execute (`knowledge_base_search` → `calculator` → `currency_converter`), each transitioning from `running` to `done` in real time.
+- **Production-grade authentication & isolation.** JWT + httpOnly cookies (XSS-resistant). Bearer token also supported for CLI/API. OAuth via Google and GitHub. Postgres-backed user accounts. Per-user sessions, messages, documents, and Weaviate tenants. Two users on the same backend never see each other's data — enforced at the database, vector store, API, and agent-context layers.
+- **Global force-logout.** When an admin force-logs out a user, every active session dies on the next request — not just admin pages. Implemented via JWT iat-cutoff checks on every authenticated endpoint.
+- **Account suspension with email notifications.** Block flow auto-force-logs-out the user, sends a templated "account suspended" email with optional admin-provided reason. Unblock fires a restoration email. Suspended users attempting to log in with the correct password see a clear "account suspended" message (wrong-password attempts still get a generic error — no enumeration leak).
+- **Voice in / voice out.** faster-whisper for STT, Microsoft Edge neural voices for TTS. One-tap mic button. Matched native voices for 37 languages.
 - **Vision for images and scanned PDFs.** When text extraction falls short, the vision model (Llama-4 Scout 17B via Groq) reads images directly. No manual workflow.
-- **37 languages.** The agent responds in the user's chosen language with a matched native TTS voice. Tool outputs (numbers, currency, dates) translate to fit the conversation naturally.
+- **Built-in observability.** Langfuse hooks wired into the agent loop. Every run captures tool calls, latencies, token usage, costs. Filter by user, replay tool trees for any failed answer.
 - **Provider abstraction.** Groq, OpenRouter, or Ollama. Switch with `LLM_PROVIDER=...` in `.env`. Same agent loop, same tools, same UX. The platform is built against a provider interface, not vendor lock-in.
-- **Light/dark theme.** Cyan accent, branded gradient. CSS-variable architecture, no flash on page load. Theme toggle in both the landing page nav and the chat sidebar, synced through one hook.
+- **Docker-native.** Single `docker-compose up` brings the full stack online: API, Postgres, Weaviate, Ollama, frontend. Production-quality entrypoints with migrations, healthchecks, and embedded volumes.
+- **Light/dark theme.** Branded cyan/teal gradient. CSS-variable architecture, no flash on page load. Theme toggle in both the landing page and the chat sidebar, synced through one hook.
 
 ---
 
@@ -33,28 +39,37 @@ A multi-tenant conversational AI platform built end-to-end. Combines per-user re
 |   (Tailwind + SSE)       | <------> |  (LangGraph + agents)    |
 +--------------------------+          +--------------------------+
                                                   |
-        +-----------------------+-----------------+-----------------+
-        v                       v                                   v
-+----------------+    +---------------------+              +----------------+
-|  LLM provider  |    |   Tools registry    |              |  RAG pipeline  |
-|  Groq /        |    |   (9 tools)         |              |  Chroma + BGE  |
-|  OpenRouter /  |    +---------------------+              |  per-user      |
-|  Ollama        |              |                          |  collections   |
-+----------------+              v                          +----------------+
-                       +-----------------+
-                       |  Voice & vision |
-                       |  Whisper + Edge |
-                       |  Llama-4 Scout  |
-                       +-----------------+
+   +---------------+----------------+--------------+--------------+
+   v               v                v                             v
++----------+ +-----------+ +-----------------+         +-------------------+
+|   LLM    | |  Tools    | |  RAG pipeline   |         |  Admin panel      |
+| provider | | registry  | |  Weaviate +     |         |  user mgmt, KB    |
+| Groq /   | | (10       | |  BGE-M3         |         |  curation, role   |
+| Open     | | tools)    | |  per-user       |         |  enforcement      |
+| Router / | +-----------+ |  tenant +       |         +-------------------+
+| Ollama   |       |       |  shared KB      |
++----------+       v       +-----------------+
+            +-----------------+        +----------------+
+            |  Voice & vision |        |    Langfuse    |
+            |  Whisper + Edge |        |  observability |
+            |  Llama-4 Scout  |        +----------------+
+            +-----------------+
 
 +----------------------------------------------------------------+
 |                       PostgreSQL                                |
-|  users · sessions · messages · alembic migrations              |
+|  users · roles · sessions · messages · OAuth accounts          |
+|  jwt_invalidated_at · alembic migrations                       |
 +----------------------------------------------------------------+
 ```
 
-**RAG path (per-user, single-shot):**
-`question + user_id (from contextvar) -> embed -> Chroma top-k in user collection -> format with sources -> LLM -> answer + citations`
+**Per-user RAG path:**
+`question + user_id (from contextvar) -> BGE-M3 embed -> Weaviate hybrid search in user tenant -> format with sources -> LLM -> answer + citations`
+
+**Shared knowledge base path:**
+`question -> BGE-M3 embed -> Weaviate hybrid (BM25 + vector) on GlobalKnowledgeBase collection -> chunks tagged with origin="knowledge_base" -> formatted into agent context with admin-curated metadata (book_title, author, page)`
+
+**Merged retrieval (chat RAG mode):**
+`question -> retrieve_merged() -> half of top-k from personal corpus + half from KB -> tagged with origin -> LLM answers with citations; UI badges personal vs KB sources distinctly`
 
 **Agent path (multi-turn, streaming):**
 `message + session history + user_id -> LangGraph 'agent' node -> LLM with bound tools -> if tool calls, route to 'tools' node -> loop until plain answer -> persist to Postgres -> emit SSE events as it runs`
@@ -62,31 +77,61 @@ A multi-tenant conversational AI platform built end-to-end. Combines per-user re
 **Multi-LLM ensemble path:**
 `question -> asyncio.gather across N models on active provider -> judge model receives all candidates -> ranks them with JSON output -> synthesizes final verdict`
 
-The agent is given RAG as a *tool*, not as a prompt prefix. The LLM decides whether documents are relevant for a given turn — much better than blindly retrieving on every message.
+The agent is given retrieval as **two distinct tools** (`document_search` for personal docs, `knowledge_base_search` for the shared KB), not as a prompt prefix. The LLM decides whether documents are relevant for a given turn — much better than blindly retrieving on every message — and which corpus to query.
 
-Per-user isolation is enforced through a Python `contextvar` set in the agent entry point. Every tool that touches user data (`document_search`, `document_summarizer`) reads `get_current_user()` and scopes its work accordingly. The pattern is small, auditable, and impossible to forget at the route layer.
+Per-user isolation is enforced through a Python `contextvar` set in the agent entry point. Every tool that touches user data (`document_search`, `document_summarizer`) reads `get_current_user()` and scopes its work accordingly. The pattern is small, auditable, and impossible to forget at the route layer. The shared knowledge base bypasses the tenant filter intentionally because it's a deliberate cross-user shared resource.
+
+**Force-logout enforcement:** Every JWT carries an `iat` (issued-at) claim. The auth dependency (`current_active_user`) runs a freshness check against `users.jwt_invalidated_at` on every request. When an admin force-logs out a user, that column is set to `now()` — every JWT issued before that moment is rejected with 401. The check applies globally, not just to admin routes.
 
 ---
 
 ## Tools
 
-The agent has 9 tools registered. It picks per turn based on the user's intent:
+The agent has 10 tools registered. It picks per turn based on the user's intent:
 
-| Tool                  | What it does                                                       |
-|-----------------------|--------------------------------------------------------------------|
-| `document_search`     | Semantic search over the current user's indexed documents          |
-| `document_summarizer` | Summarize a whole file or the user's entire corpus                 |
-| `web_search`          | DuckDuckGo (no API key needed)                                     |
-| `calculator`          | Safe AST-based math (no `eval`), handles thousands-comma numbers   |
-| `json_parser`         | Parse JSON and extract values via dotted path                      |
-| `datetime_tool`       | Date math and timezone-aware queries                               |
-| `unit_converter`      | Physical unit conversions using `pint`                             |
-| `currency_converter`  | Live ECB exchange rates via Frankfurter API                        |
-| `weather`             | Current + 3-day forecast (Open-Meteo)                              |
+| Tool                    | What it does                                                       |
+|-------------------------|--------------------------------------------------------------------|
+| `document_search`       | Semantic + BM25 hybrid search over the current user's personal documents (Weaviate per-user tenant) |
+| `knowledge_base_search` | Hybrid search over the shared admin-curated knowledge base         |
+| `document_summarizer`   | Summarize a whole file or the user's entire personal corpus        |
+| `web_search`            | DuckDuckGo (no API key needed)                                     |
+| `calculator`            | Safe AST-based math (no `eval`), handles thousands-comma numbers   |
+| `json_parser`           | Parse JSON and extract values via dotted path                      |
+| `datetime_tool`         | Date math and timezone-aware queries                               |
+| `unit_converter`        | Physical unit conversions using `pint`                             |
+| `currency_converter`    | Live ECB exchange rates via Frankfurter API                        |
+| `weather`               | Current + 3-day forecast (Open-Meteo)                              |
 
-Tool selection turned out to be a system-prompt problem more than a model problem — most "wrong tool" issues went away after rewriting tool descriptions to emphasize *when* to use each one.
+Tool selection turned out to be a system-prompt problem more than a model problem — most "wrong tool" issues went away after rewriting tool descriptions to emphasize *when* to use each one. A separate class of bug — recursion loops on compound multi-part questions — was traced via Langfuse to semantic overlap between `document_search` and `knowledge_base_search`; the fix was making the two tools genuinely scope-distinct and adding explicit "call each retrieval tool at most once per turn" guidance to the system prompt.
 
-> **Note on the missing two:** `python_repl` and `csv_reader` are in the repo but temporarily unregistered. Small open-source models (gpt-oss-20B, Llama 3.1 8B) hallucinate filenames and forget to `print()` results, making chained CSV-analysis flows unreliable. They'll be re-enabled in Phase 5 with a persistent Jupyter-style kernel and a larger model for tool calling. See the roadmap below.
+> **Note on `python_repl` and `csv_reader`:** Both are in the repo but currently unregistered. Small open-source models (gpt-oss-20B, Llama 3.1 8B) hallucinate filenames and forget to `print()` results, making chained CSV-analysis flows unreliable. Phase 5 will re-enable them with a persistent Jupyter-style kernel and a larger tool-calling model. See the roadmap.
+
+---
+
+## Admin panel
+
+A real user-management surface, not a settings page. Surfaced at `/admin` for users with `super_admin` or `corpus_admin` roles.
+
+**Three-tier role system:**
+- `user` — default for new signups. Can use chat, RAG, voice, and query the shared knowledge base.
+- `corpus_admin` — can also manage the shared knowledge base (upload, delete, preview-search).
+- `super_admin` — all of the above, plus user management (create, list, change role, suspend/unblock, reset password, force-logout).
+
+**User management capabilities:**
+- **List users** with role, active status, verification status, creation date
+- **Change role** (with self-protection: super_admins cannot demote themselves)
+- **Suspend / unblock** an account. Suspend is atomic: `is_active=false` AND `jwt_invalidated_at=now()` in one transaction, killing any live session on the user's next request. Optional reason field included in the email.
+- **Email notifications** on suspend and unblock. Suspended users attempting to log in with the correct password see a specific "account suspended" message; wrong-password attempts still get the generic error (no enumeration leak).
+- **Force-logout** kills every active session for a user. Invalidates all JWTs issued before `now()`.
+- **Send password reset** triggers the standard fastapi-users password reset flow.
+- **Edit display name**.
+
+**Knowledge base management capabilities:**
+- **Upload documents** (.pdf, .txt, .md, .docx, up to 25MB) — chunked + embedded into the shared `GlobalKnowledgeBase` Weaviate collection.
+- **Structured ingest** via JSON for fine control over per-chunk metadata.
+- **List sources** grouped by source title with chunk counts.
+- **Delete sources** by exact title match.
+- **Preview hybrid search** with adjustable BM25/vector blend (alpha 0.0–1.0).
 
 ---
 
@@ -95,47 +140,51 @@ Tool selection turned out to be a system-prompt problem more than a model proble
 ```
 cloudnest/
 ├── app/                         # FastAPI backend
-│   ├── core/                    # config · logging · LLM provider · auth · DB · schemas
+│   ├── core/                    # config · logging · LLM provider · auth · email · DB · roles · admin_deps
 │   ├── rag/
 │   │   ├── ingestion.py         # per-user document indexing
-│   │   ├── retrieval.py         # contextvar-scoped retrieval
-│   │   ├── collections.py       # per-user Chroma collection naming
-│   │   ├── embeddings.py        # BGE-small singleton
+│   │   ├── retrieval.py         # contextvar-scoped retrieval + retrieve_merged (personal + KB)
+│   │   ├── chain.py             # RAG answer chains (merged + personal-only)
+│   │   ├── collections.py       # Weaviate client + per-user tenant management
+│   │   ├── global_collection.py # GlobalKnowledgeBase (shared corpus) operations
+│   │   ├── embeddings.py        # BGE-M3 singleton (lru_cache)
 │   │   ├── extraction.py        # PDF/image text extraction + vision fallback
 │   │   └── user_context.py      # contextvar holding the active user UUID
 │   ├── agent/
-│   │   ├── graph.py             # LangGraph ReAct loop (run + stream)
+│   │   ├── graph.py             # LangGraph ReAct loop (run + stream + KB source extraction)
 │   │   ├── ensemble.py          # Multi-LLM parallel execution + judge
 │   │   ├── memory.py            # Session-scoped conversation buffer
 │   │   ├── storage.py           # Postgres-backed sessions & messages
 │   │   └── titler.py            # LLM-based automatic chat naming
-│   ├── tools/                   # 9 tool implementations
+│   ├── tools/                   # 10 tool implementations
 │   ├── voice/                   # STT (Whisper) + TTS (Edge / Piper)
-│   ├── api/                     # FastAPI route modules (auth, rag, agent, voice, attachments)
-│   ├── models/                  # SQLAlchemy models (user, session, message)
-│   ├── alembic/                 # Database migrations
-│   └── main.py                  # FastAPI entry point
+│   ├── api/                     # FastAPI route modules (auth, rag, agent, voice, attachments, admin)
+│   ├── models/                  # SQLAlchemy models (user, session, message, oauth_account)
+│   ├── alembic/                 # Database migrations (role, jwt_invalidated_at, created_at, ...)
+│   └── main.py                  # FastAPI entry point with lifespan pre-warm + exception handlers
 │
 ├── frontend/                    # Next.js 15 app
 │   ├── app/
-│   │   ├── page.tsx             # Landing page (CloudNest.ai)
+│   │   ├── page.tsx             # Landing page
 │   │   ├── chat/page.tsx        # Main chat UI
-│   │   ├── login/page.tsx       # Login (cookie auth)
-│   │   ├── signup/page.tsx      # Signup
-│   │   └── layout.tsx           # Theme bootstrapping + AuthProvider
-│   ├── components/              # UI components (Sidebar, Composer, ChatMessage, etc.)
+│   │   ├── login/page.tsx       # Login (cookie auth, surfaces suspended-account message)
+│   │   ├── signup/page.tsx
+│   │   ├── admin/               # Admin panel (users, corpus management, stats)
+│   │   └── layout.tsx
+│   ├── components/              # UI components (Sidebar, Composer, ChatMessage, SourcesPanel with KB badges, etc.)
 │   └── lib/                     # API client, types, theme hook, auth helpers
+│
+├── docker/                      # Docker-compose stack + Dockerfiles + entrypoints
+│   ├── docker-compose.yml       # full stack: postgres, weaviate, api, frontend, ollama
+│   ├── Dockerfile.api
+│   ├── Dockerfile.frontend
+│   └── api-entrypoint.sh        # waits for DB, runs alembic upgrade head, then uvicorn
 │
 ├── scripts/                     # ingestion & testing utilities
 ├── tests/                       # pytest test suite
 ├── evals/                       # Ragas RAG evaluation harness
 │
-├── data/
-│   ├── docs/<user_hex>/         # per-user uploaded documents
-│   ├── chroma/                  # per-user vector collections (gitignored)
-│   └── audio/                   # generated TTS files (gitignored)
-│
-├── docker-compose.yml           # Postgres 17
+├── data/                        # used by local-dev path only; ignored in Docker
 ├── requirements.txt
 ├── .env.example
 └── README.md
@@ -143,112 +192,127 @@ cloudnest/
 
 ---
 
-## Quick start
+## Quick start (Docker — recommended)
+
+The whole stack runs in Docker. This is the verified deployment path.
+
+### Prerequisites
+- Docker Desktop (or Docker Engine + Compose v2)
+- 16GB RAM recommended (BGE-M3 model + Weaviate + Postgres + frontend)
+- Either a free [Groq API key](https://console.groq.com/keys) or an [OpenRouter key](https://openrouter.ai/keys). Ollama runs inside the Docker stack.
+
+### 1. Clone + configure
+
+```bash
+git clone https://github.com/Muhammad-Munir-Khan/Generative-AI-Conversational-Automation-Agent
+cd Generative-AI-Conversational-Automation-Agent
+cp .env.example .env
+```
+
+Edit `.env` with at minimum:
+
+```env
+# Pick one provider
+LLM_PROVIDER=groq
+GROQ_API_KEY=gsk_your_key_here
+
+# Strong secret for production (32+ chars random)
+JWT_SECRET=your_strong_jwt_secret_here
+
+# For password reset / account suspension emails (optional in dev)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_email@gmail.com
+SMTP_PASSWORD=your_app_password
+SMTP_FROM=your_email@gmail.com
+
+# Embeddings
+EMBEDDING_MODEL=BAAI/bge-m3
+```
+
+### 2. Bring up the stack
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml logs -f
+```
+
+First boot downloads BGE-M3 (~2.2GB) — visible in the api logs as `pre-warming embedding model: BAAI/bge-m3`. Subsequent boots are fast (model cached in the container volume).
+
+Containers brought up:
+- `cloudnest-postgres` — Postgres 16 with user/session schema
+- `cloudnest-weaviate` — vector store, multi-tenant per-user
+- `cloudnest-api` — FastAPI backend, runs Alembic migrations on entrypoint
+- `cloudnest-frontend` — Next.js 15 frontend
+- `cloudnest-ollama` + `cloudnest-ollama-pull` — local LLM provider (used if `LLM_PROVIDER=ollama`)
+
+### 3. Open the app
+
+http://localhost:3000
+
+Create an account, log in, start uploading documents and chatting.
+
+### 4. Promote yourself to super_admin
+
+By default new signups get `role=user`. To get into the admin panel, set your role manually once:
+
+```bash
+docker exec -it cloudnest-postgres psql -U genai -d genai -c "UPDATE users SET role='super_admin', is_superuser=true WHERE email='you@example.com';"
+```
+
+Now reload — you'll see "Switch to Admin Panel" in the sidebar.
+
+---
+
+## Quick start (local dev — alternative)
+
+If you'd rather run the backend and frontend directly (faster iteration on code, useful for development):
 
 ### Prerequisites
 - Python 3.11
 - Node.js 20+
-- Docker (for Postgres)
-- Either a free [Groq API key](https://console.groq.com/keys), an [OpenRouter key](https://openrouter.ai/keys), or [Ollama](https://ollama.com/download) installed locally
+- Docker (just for Postgres + Weaviate)
 
-### 1. Database
-
-```bash
-docker-compose up -d
-```
-
-This starts Postgres 17 with the project's schema. The container is volume-backed, so user accounts and chat history survive restarts.
-
-### 2. Backend setup
+### Steps
 
 ```bash
-git clone https://github.com/Muhammad-Munir-Khan/<repo-name>
-cd <repo-name>
+# 1. Bring up only postgres + weaviate in Docker, keep api/frontend native
+docker compose -f docker/docker-compose.yml up -d postgres weaviate
 
+# 2. Backend
 python -m venv .venv
 .\.venv\Scripts\activate          # Windows
 # source .venv/bin/activate       # macOS / Linux
-
 pip install -r requirements.txt
-alembic upgrade head              # apply database schema
-```
-
-### 3. Environment
-
-Copy the example env file and add your keys:
-
-```bash
-copy .env.example .env            # Windows
-# cp .env.example .env            # macOS / Linux
-```
-
-For the **Groq path** (recommended for speed — sub-second responses):
-
-```
-LLM_PROVIDER=groq
-GROQ_API_KEY=gsk_your_key_here
-```
-
-For the **OpenRouter path** (access to Claude / GPT-4 / Gemini / ~100 models through one key):
-
-```
-LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=sk-or-v1_your_key_here
-OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct
-```
-
-For the **local path** (no API key needed):
-
-```
-LLM_PROVIDER=ollama
-```
-
-Then `ollama pull llama3.2:3b` (~2 GB).
-
-Set a strong `JWT_SECRET` in `.env` for production. The default value is fine for local development.
-
-### 4. Frontend setup
-
-```bash
-cd frontend
-npm install
-```
-
-### 5. Run
-
-```bash
-# Terminal 1 — Backend
+alembic upgrade head
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-# Terminal 2 — Frontend
+# 3. Frontend (in a separate terminal)
 cd frontend
+npm install
 npm run dev
-
-# Terminal 3 (only if using LLM_PROVIDER=ollama)
-ollama serve
 ```
 
 Open **http://localhost:3000** (not `127.0.0.1` — cookie auth is scoped to `localhost` in dev).
-
-### 6. Sign up and upload documents
-
-Click **Get started** on the landing page, create an account, and you're dropped into your private workspace at `/chat`. Use the document manager in the sidebar to upload PDFs, text, or DOCX files. They're chunked, embedded with BGE, and indexed into your private Chroma collection — strict isolation, no shared corpus.
 
 ---
 
 ## Demo questions to try
 
-1. **RAG with citations:** Upload a document, then ask *"What does this document say about X?"* → returns the answer with source file + page + similarity score
-2. **Multi-step tool chain:** *"What is 87,500 × 24, then convert to EUR?"* → triggers `calculator` → `currency_converter` and synthesizes the final answer in ~9 seconds
-3. **Multi-LLM consensus:** Toggle multi-LLM mode, ask *"My startup has $50k, 4 months of runway. Should I hire one senior at $15k/month or two juniors at $7k/month each?"* → 3 models answer in parallel, judge ranks them, synthesized verdict appears
-4. **Voice round-trip:** Tap the mic, say *"What's the weather in Karachi?"*, hear the answer spoken back in your selected language
-5. **Multi-tenant isolation:** Sign up as a second user — none of your first account's chats, documents, or RAG answers leak across
+1. **Personal RAG with citations:** Upload a document, ask *"What does this document say about X?"* → returns the answer with source file + page + similarity score, with a "personal" badge on the source.
+2. **Knowledge base retrieval:** As an admin, upload a company policy or manual to the KB. As any user, ask about it → answer cites the KB source with a distinct badge.
+3. **Cross-lingual retrieval (BGE-M3):** Upload an English document, ask the question in Urdu or Arabic → retrieval still hits because BGE-M3 embeddings share semantic space across languages.
+4. **Multi-step tool chain:** *"What is 87,500 × 24, then convert to EUR?"* → triggers `calculator` → `currency_converter`.
+5. **Multi-LLM consensus:** Toggle multi-LLM mode, ask a judgment question → 3 models answer in parallel, judge ranks them, synthesized verdict appears.
+6. **Voice round-trip:** Tap the mic, say *"What's the weather in Karachi?"*, hear the answer spoken back in your selected language.
+7. **Admin: account suspension flow:** As super_admin, suspend a user with a reason → user is force-logged-out instantly, receives an email, sees the suspended message on next login attempt with correct password.
+8. **Multi-tenant isolation:** Sign up as a second user — none of your first account's chats, documents, or RAG answers leak across.
 
 ---
 
 ## Configuration
 
-Every tunable lives in `.env`:
+Every tunable lives in `.env`. Highlights:
 
 | Variable                            | Default                            | Description                                                |
 |-------------------------------------|------------------------------------|------------------------------------------------------------|
@@ -256,20 +320,22 @@ Every tunable lives in `.env`:
 | `GROQ_MODEL`                        | `openai/gpt-oss-20b`               | Main agent model when using Groq                           |
 | `OPENROUTER_MODEL`                  | `meta-llama/llama-3.3-70b-instruct`| Main agent model when using OpenRouter                     |
 | `LLM_MODEL`                         | `llama3.2:3b`                      | Main agent model when using Ollama                         |
+| `EMBEDDING_MODEL`                   | `BAAI/bge-m3`                      | Embedding model. **Note:** changing this requires wiping existing Weaviate collections (dimension mismatch). |
 | `ENSEMBLE_MODELS`                   | 3 Groq models                      | Comma-separated list for multi-LLM ensemble (Groq path)    |
 | `ENSEMBLE_MODELS_OPENROUTER`        | 3 OpenRouter models                | Comma-separated list for ensemble on OpenRouter            |
 | `ENSEMBLE_JUDGE_MODEL`              | `openai/gpt-oss-120b`              | Judge model on Groq                                        |
-| `ENSEMBLE_JUDGE_MODEL_OPENROUTER`   | varies                             | Judge model on OpenRouter                                  |
 | `DATABASE_URL`                      | local Postgres                     | SQLAlchemy async DSN                                       |
 | `JWT_SECRET`                        | dev placeholder                    | **Change for production.** Secret for signing JWTs.        |
 | `JWT_LIFETIME_SECONDS`              | `604800`                           | Token lifetime (default 7 days)                            |
+| `SMTP_HOST` / `SMTP_USER` / `SMTP_PASSWORD` | empty                      | Email delivery for password reset + account suspension     |
+| `GOOGLE_OAUTH_CLIENT_ID` / `_SECRET`| empty                              | Optional Google OAuth                                       |
+| `GITHUB_OAUTH_CLIENT_ID` / `_SECRET`| empty                              | Optional GitHub OAuth                                       |
+| `LANGFUSE_PUBLIC_KEY` / `_SECRET_KEY` | empty                            | Optional observability backend                              |
 | `CHUNK_SIZE / OVERLAP / TOP_K`      | `800 / 100 / 4`                    | RAG retrieval configuration                                |
 | `WHISPER_MODEL`                     | `base`                             | STT model size: `tiny`, `base`, `small`, `medium`          |
 | `TTS_BACKEND`                       | `edge`                             | Voice engine: `edge` (neural online) or `piper` (offline)  |
-| `MAX_AGENT_ITERATIONS`              | `6`                                | Maximum tool-call loop iterations                          |
+| `MAX_AGENT_ITERATIONS`              | `8`                                | Maximum tool-call loop iterations (recursion limit 20)     |
 | `MEMORY_WINDOW`                     | `10`                               | Past message pairs kept in agent context                   |
-| `ENABLE_WEB_SEARCH`                 | `true`                             | Enable/disable web search tool                             |
-| `ENABLE_VOICE`                      | `true`                             | Enable/disable voice input/output                          |
 
 See `.env.example` for the full reference with comments.
 
@@ -277,35 +343,163 @@ See `.env.example` for the full reference with comments.
 
 ## API reference
 
-| Method | Path                                | Purpose                                                  |
-|--------|-------------------------------------|----------------------------------------------------------|
-| GET    | `/health`                           | Service status, active provider, model info             |
-| POST   | `/auth/cookie/login`                | Login (httpOnly cookie response)                        |
-| POST   | `/auth/cookie/logout`               | Logout (clears cookie)                                   |
-| POST   | `/auth/jwt/login`                   | Login (Bearer token response, for API/curl)             |
-| POST   | `/auth/register`                    | Register a new account                                   |
-| GET    | `/users/me`                         | Current user info                                        |
-| POST   | `/rag/query`                        | Single-shot RAG Q&A with citations (per-user)            |
-| GET    | `/rag/documents`                    | List the current user's indexed documents                |
-| POST   | `/rag/upload`                       | Upload + index a document into the user's collection     |
-| DELETE | `/rag/documents/{filename}`         | Remove a document from the user's collection             |
-| POST   | `/rag/reindex`                      | Re-index every file in the user's docs folder            |
-| POST   | `/agent/chat`                       | Multi-turn agent with tools + memory (non-streaming)     |
-| POST   | `/agent/stream`                     | Streaming agent (tokens + tool events via SSE)           |
-| POST   | `/agent/ensemble`                   | Multi-LLM consensus mode                                 |
-| GET    | `/agent/sessions`                   | List the current user's chat sessions                    |
-| GET    | `/agent/sessions/{id}/messages`     | Full session message history                             |
-| PATCH  | `/agent/sessions/{id}`              | Rename a session                                         |
-| DELETE | `/agent/sessions/{id}`              | Delete a session                                         |
-| POST   | `/voice/transcribe`                 | Audio → text (Whisper)                                   |
-| POST   | `/voice/tts`                        | Text → audio (Edge or Piper)                             |
-| POST   | `/attachments/extract`              | PDF/image → text (vision fallback for scanned docs)      |
+The full API surface — 49 endpoints across 7 functional groups. Interactive docs with request/response schemas live at **http://localhost:8000/docs** (Swagger UI) and **http://localhost:8000/redoc**.
 
-All endpoints except `/health`, `/auth/*`, and `/auth/register` require authentication. Browser clients authenticate via httpOnly cookie; CLI tools and scripts use `Authorization: Bearer <token>` headers. Same JWT under the hood.
+Most authenticated endpoints enforce the JWT-freshness check, so a force-logout immediately invalidates active sessions. Browser clients authenticate via the httpOnly cookie set by `/auth/cookie/login`; CLI tools and scripts use `Authorization: Bearer <token>` headers from `/auth/jwt/login`. Same JWT under the hood, two transport mechanisms.
 
-**Interactive docs:** http://localhost:8000/docs
+### Auth (`/auth/*`)
+
+User authentication via fastapi-users — dual JWT/cookie transport, password reset, email verification, and OAuth.
+
+| Method | Path                            | Purpose                                                  |
+|--------|---------------------------------|----------------------------------------------------------|
+| POST   | `/auth/jwt/login`               | Login, response carries `{access_token, token_type}` (for API/curl/mobile) |
+| POST   | `/auth/jwt/logout`              | Logout (no-op server-side; JWT is stateless)             |
+| POST   | `/auth/cookie/login`            | Login, sets httpOnly `genai_auth` cookie (for browser)   |
+| POST   | `/auth/cookie/logout`           | Logout, clears the cookie                                |
+| POST   | `/auth/register`                | Register a new account with email + password             |
+| POST   | `/auth/forgot-password`         | Send password reset email (fires `password_reset_email` template) |
+| POST   | `/auth/reset-password`          | Complete password reset with token from email; fires `password_changed_email` notification |
+| POST   | `/auth/request-verify-token`    | Send email verification token to a user                  |
+| POST   | `/auth/verify`                  | Verify a user's email with the token from the verification email |
+| GET    | `/auth/google/authorize`        | Begin Google OAuth flow — returns the authorization URL the browser should visit |
+| GET    | `/auth/google/callback`         | OAuth callback: exchanges code, gets/creates/links the user, sets cookie, redirects to frontend |
+| GET    | `/auth/github/authorize`        | Begin GitHub OAuth flow                                  |
+| GET    | `/auth/github/callback`         | OAuth callback (same flow as Google)                     |
+
+**Security notes:**
+- Suspended accounts (set via admin panel) attempting to log in with the **correct password** receive a `403` with "account suspended" message. Wrong-password attempts still return generic `400` bad credentials — no enumeration leak.
+- OAuth callbacks check suspension status. Blocked OAuth users redirect to `/login?error=...` instead of getting logged in.
+- The custom JWT strategy adds an `iat` claim to every token so force-logout (via `users.jwt_invalidated_at`) can invalidate sessions atomically.
+
+### Users (`/users/*`)
+
+User profile management — fastapi-users' standard router. The `/users/{id}` endpoints require `is_superuser=True` (auto-synced with the `super_admin` role).
+
+| Method | Path                            | Purpose                                                  |
+|--------|---------------------------------|----------------------------------------------------------|
+| GET    | `/users/me`                     | Current user info (id, email, role, display_name, ...)   |
+| PATCH  | `/users/me`                     | Update own profile (display_name, password)              |
+| GET    | `/users/{id}`                   | Get any user by ID (super_admin only)                    |
+| PATCH  | `/users/{id}`                   | Update any user (super_admin only) — including role changes which trigger `is_superuser` sync |
+| DELETE | `/users/{id}`                   | Hard-delete a user (super_admin only). Cascades through sessions/messages/OAuth accounts. Use with caution — for normal account deactivation, prefer `PATCH /admin/users/{id}/active` which suspends with email notification |
+
+> The admin panel uses the `/admin/users/*` endpoints rather than `/users/{id}` for user management because the admin routes carry first-class behaviors like auto-force-logout-on-block, suspension emails, and audit logging. The `/users/{id}` endpoints are the raw fastapi-users surface — useful for scripting and administration that needs the cascade-delete behavior.
+
+### RAG (`/rag/*`)
+
+Per-user document indexing and retrieval. Every endpoint operates on the authenticated user's Weaviate tenant — strict isolation, no cross-user leakage.
+
+| Method | Path                            | Purpose                                                  |
+|--------|---------------------------------|----------------------------------------------------------|
+| POST   | `/rag/query`                    | Single-shot RAG Q&A with citations. Merges retrieval from personal docs + shared knowledge base. Returns `{answer, sources[], latency_ms}` |
+| GET    | `/rag/documents`                | List the authenticated user's indexed documents          |
+| POST   | `/rag/documents`                | Upload + index a document (PDF, TXT, MD, DOCX, image) into the user's tenant |
+| DELETE | `/rag/documents/{filename}`     | Remove a document from the user's tenant                 |
+| POST   | `/rag/reindex`                  | Re-index every file in the user's docs folder (useful after embedding model changes) |
+| POST   | `/rag/ingest`                   | Run global ingestion routine — administrative utility for bulk-loading content. Auth-gated; check route source for current scope. |
+
+**Honest notes:**
+- `/rag/query` always queries **both** personal docs and the shared knowledge base in a merged top-k retrieval. Source objects carry an `origin` field (`"personal"` or `"knowledge_base"`) so the UI can render distinct badges. This is different from the agent flow, where the LLM picks per-turn whether to call `document_search` or `knowledge_base_search`.
+- Reindex is needed when changing `EMBEDDING_MODEL` — existing vectors are locked at the dimension they were created with; the model swap requires dropping collections and re-ingesting.
+
+### Agent (`/agent/*`)
+
+Multi-turn conversational agent with 10 tools, streaming, session persistence, and multi-LLM ensemble.
+
+| Method | Path                                          | Purpose                                                  |
+|--------|-----------------------------------------------|----------------------------------------------------------|
+| POST   | `/agent/chat`                                 | Multi-turn agent with tools + memory (non-streaming). Returns the final synthesized answer plus source metadata |
+| POST   | `/agent/stream`                               | Streaming agent via Server-Sent Events. Emits live tool-call events (`running` → `done`), token deltas, and source attachments as they happen |
+| POST   | `/agent/ensemble`                             | Multi-LLM consensus mode. Fans the query out to N models in parallel, judge ranks + synthesizes the final answer |
+| GET    | `/agent/sessions`                             | List the authenticated user's chat sessions (auto-titled, sorted by recency) |
+| GET    | `/agent/sessions/{session_id}/messages`       | Full message history for one session                     |
+| POST   | `/agent/sessions/{session_id}`                | Create a session with a specific UUID (idempotent — used by frontend to anchor a session before the first user message) |
+| PATCH  | `/agent/sessions/{session_id}`                | Rename a session (override the auto-generated title)     |
+| DELETE | `/agent/sessions/{session_id}`                | Delete a session and all its messages                    |
+
+**SSE event shape on `/agent/stream`:**
+The stream emits `data:` lines carrying JSON events of types `token` (partial assistant content), `tool_use` (tool call started, with name + args), `tool_result` (tool call finished with output), `sources` (final source attachments from any RAG tool calls), and `done` (terminal event).
+
+### Voice (`/voice/*`)
+
+Speech-to-text via faster-whisper, text-to-speech via Edge or Piper.
+
+| Method | Path                            | Purpose                                                  |
+|--------|---------------------------------|----------------------------------------------------------|
+| POST   | `/voice/transcribe`             | Audio → text. Multipart upload (WAV/MP3/M4A/OGG); returns transcript + detected language |
+| POST   | `/voice/tts`                    | Text → audio. JSON body with text + language; returns audio bytes in the configured TTS format |
+
+The TTS engine is configurable via `TTS_BACKEND` (`edge` = Microsoft neural voices online, 37 languages; `piper` = local offline voices). Edge auto-picks the matching native voice for the language code.
+
+### Attachments (`/attachments/*`)
+
+Document and image extraction utility — used by chat composer for "drag & drop a file" before sending it as context.
+
+| Method | Path                            | Purpose                                                  |
+|--------|---------------------------------|----------------------------------------------------------|
+| POST   | `/attachments/extract`          | PDF/image → text. Tries text extraction first, falls back to the vision model (Llama-4 Scout 17B via Groq) for scanned PDFs and image content |
+
+### Admin (`/admin/*`)
+
+User management, knowledge base curation, and system stats. Gated by role:
+- `super_admin` — all admin endpoints
+- `corpus_admin` — only `/admin/corpus/*` endpoints
+- All others — `403 Forbidden`
+
+#### User management (`super_admin` only)
+
+| Method | Path                                      | Purpose                                                  |
+|--------|-------------------------------------------|----------------------------------------------------------|
+| GET    | `/admin/users`                            | List all users with role, active status, verification status, created_at |
+| PATCH  | `/admin/users/{user_id}/role`             | Change user's role. Self-protection: super_admins cannot demote themselves. Auto-syncs `is_superuser` flag with role |
+| PATCH  | `/admin/users/{user_id}/active`           | Suspend or unblock a user. On block: sets `is_active=false` AND `jwt_invalidated_at=now()` atomically (immediate force-logout), fires "account suspended" email with optional reason. On unblock: fires "account restored" email |
+| PATCH  | `/admin/users/{user_id}`                  | Edit user display name. Email is intentionally not editable (login identity) |
+| POST   | `/admin/users/{user_id}/send-reset`       | Trigger password reset flow for a target user. Reuses fastapi-users forgot_password flow, fires reset email |
+| POST   | `/admin/users/{user_id}/force-logout`     | Set `jwt_invalidated_at=now()` for the target user, invalidating every JWT issued before this moment. The user is rejected with `401` on their very next request. Self-protection: admins cannot force-logout themselves |
+
+#### Knowledge base management (`corpus_admin` or higher)
+
+| Method | Path                                      | Purpose                                                  |
+|--------|-------------------------------------------|----------------------------------------------------------|
+| POST   | `/admin/corpus/ingest`                    | Structured JSON ingest into the shared `GlobalKnowledgeBase` Weaviate collection. Each item carries explicit metadata (text, content_type, source_title, author, language, etc.) — use this path when you want fine-grained control over per-chunk attributes |
+| POST   | `/admin/corpus/upload`                    | File upload into the shared KB (PDF, TXT, MD, DOCX). 25MB cap. The file is chunked with the same loaders as personal RAG, then embedded + inserted. Form fields: `file`, `content_type`, `source_title`, `author` |
+| GET    | `/admin/corpus/stats`                     | Total chunk count in the shared KB                       |
+| GET    | `/admin/corpus/sources`                   | List all sources in the KB, grouped by `source_title`, with per-source chunk counts and content_type. Sorted most-chunks-first |
+| DELETE | `/admin/corpus/sources?source_title=X`    | Delete every chunk whose source_title matches exactly. Source title comes as a query parameter (not path segment) because titles can contain arbitrary punctuation. Returns `{source_title, deleted}` |
+| POST   | `/admin/corpus/search`                    | Hybrid search preview over the KB (BM25 + vector blend, configurable alpha 0.0–1.0). Admin-facing sanity check before users see results — the same `global_search` function used by the agent's `knowledge_base_search` tool |
+
+#### System stats (`super_admin` only)
+
+| Method | Path                            | Purpose                                                  |
+|--------|---------------------------------|----------------------------------------------------------|
+| GET    | `/admin/stats`                  | High-level dashboard stats: `total_users`, `corpus_total` (KB chunk count) |
+
+### Default (`/`)
+
+| Method | Path                            | Purpose                                                  |
+|--------|---------------------------------|----------------------------------------------------------|
+| GET    | `/health`                       | Public health check. Returns `{status, version, provider, llm_model, embedding_model, voice_enabled, tts_backend}`. Used by Docker healthchecks and ops monitoring |
+| GET    | `/`                             | Public service root. Returns a self-description listing main endpoint paths — useful for discovering the API surface from a curl |
 
 ---
+
+### Authentication recap by endpoint group
+
+| Group           | Auth required?                                                                    |
+|-----------------|-----------------------------------------------------------------------------------|
+| `/auth/*`       | Public (these issue auth, they don't consume it)                                  |
+| `/users/me`     | Any authenticated user                                                            |
+| `/users/{id}`   | `super_admin` (via `is_superuser`)                                                |
+| `/rag/*`        | Any authenticated user                                                            |
+| `/agent/*`      | Any authenticated user                                                            |
+| `/voice/*`      | Any authenticated user                                                            |
+| `/attachments/*`| Any authenticated user                                                            |
+| `/admin/users/*`, `/admin/stats` | `super_admin`                                                    |
+| `/admin/corpus/*` | `corpus_admin` or `super_admin`                                                 |
+| `/health`, `/`  | Public                                                                            |
+
+Every authenticated endpoint runs the JWT-freshness check against `users.jwt_invalidated_at`, so force-logout is enforced globally — chat, RAG, voice, attachments, sessions, admin. There is no authenticated route that lets a force-logged-out token survive.
 
 ## Testing
 
@@ -314,7 +508,7 @@ pip install pytest
 pytest
 ```
 
-Tests cover the calculator (including malicious input rejection), schema validation, memory eviction, tool argument parsing, and authentication flows. They run in a few seconds and don't require Ollama, Groq, or a vectorstore.
+Tests cover the calculator (including malicious-input rejection), schema validation, memory eviction, tool argument parsing, and authentication flows. They run in a few seconds and don't require external services.
 
 For RAG quality evaluation:
 
@@ -330,16 +524,20 @@ Outputs faithfulness, answer relevancy, context precision, and context recall.
 ## Trade-offs and design notes
 
 - **LangGraph over LangChain agents.** Explicit state transitions make streaming, debugging, and testing dramatically easier. Trying to stream from a LangChain `AgentExecutor` was painful; LangGraph emits `updates` and `messages` events you can directly forward over SSE.
-- **Per-user Chroma collections over a single shared collection with metadata filters.** Strict isolation is easier to reason about when it's enforced by the storage layer, not by a query filter you have to remember to apply.
-- **Provider abstraction with contextvar-based user isolation.** Every tool that touches user data reads `get_current_user()` instead of receiving a `user_id` parameter. This keeps tool signatures clean for the LLM, prevents accidental cross-user leakage, and makes the agent loop trivially auditable.
-- **PostgreSQL + Alembic over SQLite or "AI memory frameworks."** Real multi-tenant data needs real relational guarantees and migration tooling. fastapi-users handles auth on top of SQLAlchemy and does the boring parts well.
+- **Weaviate over Chroma.** Multi-tenancy is a first-class feature in Weaviate — each user gets a logically isolated tenant under one collection, instead of one collection per user. Cleaner ops, better resource sharing, real hybrid search (BM25 + vector) built in.
+- **BGE-M3 over English-only embedding models.** A real differentiator for non-English use cases. The dimension cost (1024 vs 384) and the disk cost (~2.2GB vs ~130MB) is worth paying for cross-lingual retrieval that actually works on Urdu, Arabic, Hindi, Chinese, etc.
+- **Provider abstraction with contextvar-based user isolation.** Every tool that touches user data reads `get_current_user()` instead of receiving a `user_id` parameter. Tool signatures stay clean for the LLM, accidental cross-user leakage is impossible, and the agent loop is trivially auditable.
+- **PostgreSQL + Alembic + fastapi-users.** Real multi-tenant data needs real relational guarantees and migration tooling. fastapi-users handles auth on top of SQLAlchemy and does the boring parts well, including OAuth account linking.
 - **httpOnly cookies for browser, Bearer JWT for CLI.** Two transports, same JWT strategy. Browser clients are XSS-resistant; API clients still work with `Authorization` headers.
-- **Two SQLAlchemy engines** — one for the main event loop, one for the background event loop where the auto-titler runs. Discovered the hard way that sharing a connection pool across loops corrupts asyncpg state.
-- **BGE-small over OpenAI embeddings.** Runs locally, no per-token cost, top-tier on MTEB for its size class.
+- **Custom JWT strategy with `iat` claim.** fastapi-users' default JWT doesn't include `iat`. We override `JWTStrategy.write_token` to add it so the freshness check (against `jwt_invalidated_at`) has a referent. Same security guarantees as the default, plus immediate revocation.
+- **Force-logout enforced globally, not just on /admin.** First implementation gated only admin routes — meaning regular users could keep chatting after being force-logged-out. Fix: `current_active_user` itself runs the freshness check, so every authenticated endpoint enforces it.
+- **Account suspension override at the `UserManager.authenticate` level.** Wrong-password attempts return `None` (generic bad creds). Correct password + inactive raises a custom exception that the global handler turns into a 403 with a clear message. This means probing emails with wrong passwords reveals nothing; only someone with the actual password learns that an account is suspended. Acceptable security tradeoff: the legitimate user finds out exactly when they need to.
+- **Two separately-scoped retrieval tools.** `document_search` (personal-only) and `knowledge_base_search` (shared-only) deliberately do NOT overlap. A first design where both invoked the merged retrieval caused recursion loops because the agent oscillated between them. Lesson: when tools overlap semantically, LLMs thrash.
 - **SSE over WebSockets.** Simpler. One-way streaming is all we need. FastAPI's `StreamingResponse` handles it natively.
 - **DuckDuckGo, not Google.** No API key. Trade-off is occasionally lower-quality results.
-- **The agent gets RAG as a tool, not a prompt prefix.** The LLM decides whether documents are relevant for a given turn instead of blindly retrieving on every message.
-- **Lazy-loaded singletons** (vectorstore per user, embeddings, LLM, Whisper model) are cached with `lru_cache` so first request is slow but subsequent ones are fast.
+- **The agent gets retrieval as tools, not a prompt prefix.** The LLM decides per-turn whether documents are relevant and which corpus to query, instead of blindly retrieving on every message.
+- **BGE-M3 pre-warm in FastAPI lifespan.** Without it, the first user request triggers a silent 2.2GB model download, looking like a hang. Pre-warming at startup surfaces the download in container logs and keeps the model in `lru_cache` for the container's life.
+- **Lazy-loaded singletons** (Weaviate client, embeddings, LLM, Whisper model) cached with `lru_cache` so first request is slow but subsequent ones are fast.
 
 ---
 
@@ -349,11 +547,11 @@ I'd rather list these than have a recruiter find them:
 
 - **CSV analysis and Python REPL are temporarily disabled.** Small open-source models hallucinate filenames and forget to wrap results in `print()`. The tools are still in the repo but unregistered. Rebuilding in Phase 5 with a persistent Jupyter-style kernel and a larger tool-calling model.
 - **OpenRouter free tier is rate-limited.** Free-tier requests go into a low-priority queue at the upstream provider; under load they time out. The architecture works perfectly — switching `LLM_PROVIDER=openrouter` routes the entire app through OpenRouter — but for production demos, a $5–10 credit removes the queue.
-- **Chroma for vectors, Postgres for everything else.** Two stores means two backup paths and no SQL joins across user data and embeddings. Phase 5 will migrate to pgvector for unified storage.
-- **No prompt-injection defense.** A malicious document or attachment could try to manipulate the agent. For production, add a content classifier and tool-output filtering.
+- **No prompt-injection defense.** A malicious document or attachment could try to manipulate the agent. Production deployments in regulated industries would want a content classifier on uploaded files.
 - **LLM-as-judge bias in the ensemble.** The judge is biased toward verbose/confident answers. Mitigated by mixing model families but not eliminated.
-- **No observability backend wired.** Langfuse hooks exist in `app/core/config.py` but aren't connected. Easy to add.
-- **In-memory rate limiting only.** Production would need Redis-backed per-user rate limits.
+- **No request-level rate limiting yet.** A heavy user could in theory hammer the chat/RAG endpoints. Production would add Redis-backed per-user rate limits.
+- **TLS, secrets management, and production deployment hardening.** Docker compose is great for development and pilots; production deployment to a real environment (kubernetes, managed Postgres, managed Weaviate, real secret store) is the next milestone.
+- **No frontend in-flight kick on force-logout.** Force-logout is enforced server-side on the user's next request. If they're idle in the chat UI, the UI doesn't proactively boot them — the next click does. A WebSocket-pushed logout would close that gap but adds significant complexity.
 
 ---
 
@@ -363,27 +561,32 @@ A few things tutorials don't cover:
 
 - **Multi-tenant isolation is easier with a contextvar than with explicit parameters.** Threading `user_id` through every LangChain call site is painful and error-prone. Setting it once in the agent entry point and reading it from `get_current_user()` in tools is small, auditable, and impossible to forget at the route layer.
 - **Tool selection is a system-prompt problem, not a model problem.** Most "the agent picked the wrong tool" issues went away after rewriting tool descriptions to emphasize *when* to use each one, not just *what* it does.
+- **Tool semantic overlap causes recursion loops.** Two tools that retrieve from overlapping data sources make the agent thrash — it tries one, gets a hit, tries the other "to be sure," reformulates, retries. The fix isn't a higher recursion cap; it's making tool boundaries genuinely distinct so the agent doesn't see a choice where there shouldn't be one.
 - **Streaming UX is the difference between "demo" and "product."** Users tolerate latency if they can see something happening. The live trace timeline shipped before any actual perf work, and it changed how the system felt.
 - **Multi-LLM ensembling produces visibly better answers on judgment questions, not factual ones.** For "what year was X invented" three models give the same answer. For "should I hire a senior or two juniors with limited runway" they disagree productively — and a smaller model from a different family caught a budget constraint that two bigger Llamas missed. The judge picked it. That's the moment the architecture earned its compute.
 - **Defensive tool schemas catch real production bugs.** Groq's strict schema validation rejects LLM-quoted numeric arguments (`amount: "2100000"` when schema declares `float`). Adding `value: float | int | str` plus a coercion block in `calculator`, `currency_converter`, and `unit_converter` fixed a class of intermittent failures.
+- **Security defaults like "force-logout on /admin" are decorative if they don't apply everywhere.** First implementation of force-logout only ran the freshness check on admin routes. Regular users could keep chatting indefinitely after being force-logged-out. Defense-in-depth: every authenticated endpoint runs the check, or none of them do.
+- **Embedding dimensions lock collections.** Swapping `bge-small-en-v1.5` (384-dim) for `bge-m3` (1024-dim) requires dropping every collection. Discovered this when adding multilingual support — a config change that *seemed* trivial turned out to require a data migration. Lesson: embedding model is part of the storage contract, not the application config.
 - **Two SQLAlchemy engines are sometimes necessary.** A connection pool can't safely span event loops in asyncpg. The main FastAPI loop and the background titler loop each need their own.
 - **CSS variables beat duplicating styles.** Light/dark theming with a single source of truth (theme tokens in `globals.css`) made the implementation small and fixes effortless. The first attempt — Tailwind `dark:` variants on every component — was 20× the code.
 
 ---
 
-## Phase 5 roadmap
+## Roadmap
 
 What's next, ordered by priority:
 
-1. **Migrate vectors from Chroma to pgvector.** Unified storage layer, real transactions across user data and embeddings, simpler backups.
-2. **Rebuild `python_repl` and `csv_reader` with a persistent Jupyter-style kernel.** Faster (no subprocess boot per call), more reliable (state persists across calls), and pair with a bigger tool-calling model.
-3. **Per-user rate limiting via Redis.** Currently in-memory only.
-4. **Langfuse observability.** Config hooks exist; just need wiring.
+1. **TLS + production deployment hardening.** Real secret store, managed Postgres, managed Weaviate. Kubernetes manifests as an alternative to docker-compose.
+2. **Per-user request rate limiting via Redis.** Currently no limits.
+3. **Rebuild `python_repl` and `csv_reader` with a persistent Jupyter-style kernel.** Faster (no subprocess boot per call), more reliable (state persists across calls), pair with a larger tool-calling model.
+4. **Langfuse dashboards for admin panel.** The traces are already captured; surface them in the UI for super_admins.
 5. **Ragas-based eval harness in CI.** Measure retrieval quality on every change to the RAG pipeline.
-6. **Prompt-injection content classifier.** Run uploaded documents through a safety check before they enter the agent context.
+6. **Prompt-injection content classifier.** Run uploaded documents through a safety check before they enter the agent context. Critical for any regulated-industry deployment.
+7. **Per-tenant resource quotas.** Storage limits per user, message quotas per session.
+8. **Audit log surface in the admin panel.** Login attempts, role changes, suspensions, KB modifications — all already logged at the app level, just need surfacing in the UI.
 
 ---
 
 ## Credits
 
-Built by [Munir Khan](https://www.linkedin.com/in/munir-k-0106b1256/). If this helped you understand how to build a real GenAI platform end-to-end, a star on the repo is appreciated.
+Built by [Munir Khan](https://www.linkedin.com/in/munir-k-0106b1256/). If this helped you understand how to build a real GenAI platform end-to-end — or you're considering CloudNest for your own organization's AI workspace — a star on the [repo](https://github.com/Muhammad-Munir-Khan/Generative-AI-Conversational-Automation-Agent) is appreciated.

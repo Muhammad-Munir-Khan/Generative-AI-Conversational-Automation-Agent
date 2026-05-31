@@ -12,8 +12,14 @@ Force-logout enforcement (security-critical):
     check: if the JWT's iat predates jwt_invalidated_at, 401.
   - This means force-logout is genuinely global: chat, RAG, sessions, admin -
     every authenticated endpoint rejects stale tokens on the very next call.
-  - Cost: one indexed users.jwt_invalidated_at lookup per request via the
-    underlying fastapi-users session, plus a JWT decode we'd be doing anyway.
+
+Account suspension at login:
+  - UserManager.authenticate is overridden so that when the password is
+    correct but is_active=False, we raise AccountSuspendedError instead of
+    returning None. main.py registers an exception handler that turns this
+    into a 403 with a clear message. Wrong-password and unknown-user still
+    return None (generic "bad credentials") so attackers can't probe whether
+    a given email is suspended vs nonexistent.
 """
 import uuid
 from datetime import datetime, timezone
@@ -29,8 +35,13 @@ from fastapi_users.authentication import (
 )
 from fastapi_users.jwt import generate_jwt
 import jwt as pyjwt
+from fastapi.security import OAuth2PasswordRequestForm
 
-from app.core.email import password_reset_email, send_email, password_changed_email
+from app.core.email import (
+    password_reset_email,
+    send_email,
+    password_changed_email,
+)
 from fastapi_users.db import SQLAlchemyUserDatabase
 from httpx_oauth.clients.github import GitHubOAuth2
 from httpx_oauth.clients.google import GoogleOAuth2
@@ -43,6 +54,24 @@ from app.core.roles import UserRole
 from app.models.user import OAuthAccount, User
 
 log = get_logger(__name__)
+
+
+# --- Custom auth exception ----------------------------------------------------
+# Raised by UserManager.authenticate when the password is correct but the
+# user has been suspended (is_active=False). main.py registers an exception
+# handler that turns this into a 403 with a clear message.
+
+class AccountSuspendedError(Exception):
+    """Raised when a user with correct credentials is blocked / suspended.
+
+    Carries an optional `email` for logging at the handler. We deliberately
+    do NOT include the admin-set reason here; the reason lives in the email
+    sent at block time. The login response is intentionally generic to avoid
+    leaking admin notes through the API.
+    """
+    def __init__(self, email: str = ""):
+        super().__init__("Account suspended")
+        self.email = email
 
 
 # --- User database adapter (now with OAuth support) ---
@@ -68,6 +97,48 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         )
         if user.is_superuser != should_be:
             await self.user_db.update(user, {"is_superuser": should_be})
+
+    async def authenticate(
+        self, credentials: OAuth2PasswordRequestForm
+    ) -> Optional[User]:
+        """Override fastapi-users authenticate to detect suspended accounts.
+
+        Behavior:
+          - User not found / wrong password -> return None (generic bad creds).
+          - Correct password + is_active=False -> raise AccountSuspendedError.
+          - Correct password + active -> return user (normal flow).
+
+        This means probing emails with wrong passwords always gets the same
+        generic response; only someone with the correct password learns that
+        an account is suspended. Acceptable tradeoff: the legit user finds
+        out exactly when they need to, attackers gain nothing.
+        """
+        # Same shape as fastapi-users' default implementation, adapted to
+        # raise on inactive-but-correct-password.
+        from fastapi_users import exceptions as fu_exceptions
+
+        try:
+            user = await self.get_by_email(credentials.username)
+        except fu_exceptions.UserNotExists:
+            # Run the hasher to mitigate timing attack (mirrors upstream).
+            self.password_helper.hash(credentials.password)
+            return None
+
+        verified, updated_password_hash = self.password_helper.verify_and_update(
+            credentials.password, user.hashed_password
+        )
+        if not verified:
+            return None
+        if updated_password_hash is not None:
+            await self.user_db.update(user, {"hashed_password": updated_password_hash})
+
+        # Password is correct. If the account is suspended, surface that
+        # specifically instead of letting the router return generic bad creds.
+        if not user.is_active:
+            log.info("blocked-user login attempt: %s", user.email)
+            raise AccountSuspendedError(email=user.email)
+
+        return user
 
     async def on_after_register(self, user: User, request=None):
         log.info("user registered: %s (%s)", user.email, user.id)
@@ -179,9 +250,6 @@ _current_active_user_no_freshness = fastapi_users.current_user(active=True)
 
 
 # --- Freshness check: rejects JWTs issued before force-logout -----------------
-# Defined BEFORE the public `current_active_user` re-bind below so the public
-# name (which everything imports) gets the freshness check by default. That's
-# the whole point: force-logout must be enforced everywhere, not just admin.
 
 def _extract_token(request: Request) -> Optional[str]:
     """Pull a JWT from either the Bearer header or the cookie."""
@@ -209,8 +277,6 @@ async def _check_freshness(request: Request, user: User) -> User:
         )
 
     try:
-        # We trust the signature/exp check that the inner dependency already
-        # passed. Here we just need the payload to read `iat`.
         payload = pyjwt.decode(
             token,
             settings.jwt_secret,
@@ -225,7 +291,6 @@ async def _check_freshness(request: Request, user: User) -> User:
 
     iat = payload.get("iat")
     if iat is None:
-        # Token predates the iat upgrade -> treat as stale.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session expired, please log in again",

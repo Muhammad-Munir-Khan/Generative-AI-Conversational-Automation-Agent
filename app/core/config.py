@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     openrouter_app_name: str | None = "GenAI Agent"
 
     # Embeddings
-    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_model: str = "BAAI/bge-m3"
 
     # Retrieval
     chunk_size: int = 800

@@ -386,11 +386,18 @@ export async function adminSetUserRole(
 export async function adminSetUserActive(
   userId: string,
   isActive: boolean,
+  reason?: string,
 ): Promise<AdminUserInfo> {
+  // reason is shown to the user in the suspension email and is ignored
+  // server-side when isActive=true (unblock).
+  const body: { is_active: boolean; reason?: string } = { is_active: isActive };
+  if (!isActive && reason && reason.trim()) {
+    body.reason = reason.trim();
+  }
   const res = await apiFetch(`${API_URL}/admin/users/${userId}/active`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ is_active: isActive }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     let detail = `${res.status}`;
