@@ -8,6 +8,7 @@ import {
   Ban,
   CheckCircle2,
   LogOut,
+  Trash2,
   Search,
   ArrowUpDown,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import {
   adminEditUser,
   adminSendReset,
   adminForceLogout,
+  adminDeleteUser,
 } from "@/lib/api";
 import type { AdminUserInfo } from "@/lib/types";
 import { useAuth } from "@/components/AuthProvider";
@@ -53,6 +55,11 @@ export default function AdminUsersPage() {
   // confirm modal for block (with optional reason). Unblock is one-click.
   const [confirmBlock, setConfirmBlock] = useState<AdminUserInfo | null>(null);
   const [blockReason, setBlockReason] = useState("");
+
+  // confirm modal for HARD DELETE. Type-to-confirm: the typed text must match
+  // the target user's email exactly before the Delete button enables.
+  const [confirmDelete, setConfirmDelete] = useState<AdminUserInfo | null>(null);
+  const [deleteEmailConfirm, setDeleteEmailConfirm] = useState("");
 
   const load = () => {
     adminListUsers()
@@ -138,6 +145,32 @@ export default function AdminUsersPage() {
     await toggleActive(confirmBlock.id, false, blockReason);
     setConfirmBlock(null);
     setBlockReason("");
+  };
+
+  const doDelete = async () => {
+    if (!confirmDelete) return;
+    // Defensive: refuse to proceed if typed email doesn't match exactly.
+    // The button is also disabled below, but defense-in-depth never hurts.
+    if (deleteEmailConfirm.trim() !== confirmDelete.email) {
+      setError("Typed email does not match. Aborted.");
+      return;
+    }
+    const targetEmail = confirmDelete.email;
+    const targetId = confirmDelete.id;
+    setBusyId(targetId);
+    setError(null);
+    setMenuId(null);
+    try {
+      await adminDeleteUser(targetId);
+      setUsers((prev) => prev.filter((u) => u.id !== targetId));
+      flash(`User ${targetEmail} deleted permanently. They have been emailed.`);
+      setConfirmDelete(null);
+      setDeleteEmailConfirm("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const openEdit = (u: AdminUserInfo) => {
@@ -366,6 +399,18 @@ export default function AdminUsersPage() {
                             onClick={() => toggleActive(u.id, true)}
                           />
                         )}
+                        <div className="my-1 border-t border-[var(--border-subtle)]" />
+                        <MenuItem
+                          icon={<Trash2 size={14} />}
+                          label="Delete user"
+                          danger
+                          disabled={isMe}
+                          onClick={() => {
+                            setConfirmDelete(u);
+                            setDeleteEmailConfirm("");
+                            setMenuId(null);
+                          }}
+                        />
                         <MenuItem
                           icon={<LogOut size={14} />}
                           label="Force logout"
@@ -439,6 +484,84 @@ export default function AdminUsersPage() {
                 className="px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
               >
                 {busyId === editing.id ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hard delete confirmation with type-to-confirm gate */}
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+          onClick={() =>
+            busyId !== confirmDelete.id && (setConfirmDelete(null), setDeleteEmailConfirm(""))
+          }
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-xl border border-red-500/30 bg-[var(--bg-card)] p-6"
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <Trash2 size={18} className="text-red-500" />
+              <h2 className="text-lg font-semibold text-[var(--fg-primary)]">
+                Delete user permanently?
+              </h2>
+            </div>
+            <p className="text-sm text-[var(--fg-secondary)] mt-3">
+              You are about to permanently delete{" "}
+              <span className="text-[var(--fg-primary)] font-medium">
+                {confirmDelete.email}
+              </span>
+              . This will remove:
+            </p>
+            <ul className="mt-2 text-xs text-[var(--fg-secondary)] list-disc pl-5 space-y-0.5">
+              <li>Their account and login credentials</li>
+              <li>All their chat sessions and messages</li>
+              <li>All documents they uploaded</li>
+              <li>All vector data derived from those documents</li>
+            </ul>
+
+            <div className="mt-4 p-3 rounded-lg bg-red-500/5 border border-red-500/20 text-xs text-red-400">
+              This is permanent and cannot be undone.
+            </div>
+
+            <label className="block mt-5">
+              <span className="text-xs font-medium text-[var(--fg-secondary)] uppercase tracking-wider">
+                To confirm, type the user&apos;s email exactly
+              </span>
+              <input
+                type="text"
+                value={deleteEmailConfirm}
+                onChange={(e) => setDeleteEmailConfirm(e.target.value)}
+                autoFocus
+                placeholder={confirmDelete.email}
+                className="mt-2 w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-lg text-[var(--fg-primary)] placeholder-[var(--fg-muted)] focus:outline-none focus:border-red-500 font-mono"
+              />
+            </label>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setConfirmDelete(null);
+                  setDeleteEmailConfirm("");
+                }}
+                disabled={busyId === confirmDelete.id}
+                className="px-4 py-2 rounded-lg text-sm text-[var(--fg-secondary)] hover:bg-[var(--bg-base)] transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={doDelete}
+                disabled={
+                  busyId === confirmDelete.id ||
+                  deleteEmailConfirm.trim() !== confirmDelete.email
+                }
+                className="px-4 py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {busyId === confirmDelete.id
+                  ? "Deleting…"
+                  : "Delete permanently"}
               </button>
             </div>
           </div>

@@ -22,6 +22,7 @@ from app.core.admin_deps import require_corpus_admin, require_super_admin
 from app.core.auth import get_user_manager
 from app.core.db import get_async_session
 from app.core.email import (
+    account_deleted_email,
     account_suspended_email,
     account_unsuspended_email,
     send_email,
@@ -29,6 +30,10 @@ from app.core.email import (
 from app.core.logging import get_logger
 from app.core.roles import UserRole
 from app.models.user import User
+from app.rag.collections import (
+    delete_user_collection,
+    delete_user_docs_dir,
+)
 from app.rag.global_collection import (
     add_to_global_corpus,
     delete_by_source,
@@ -349,6 +354,116 @@ async def force_logout(
 
     log.info("admin %s force-logged-out %s", admin.email, user.email)
     return {"status": "ok", "email": user.email, "invalidated_at": now.isoformat()}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    admin: User = Depends(require_super_admin),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Hard-delete a user and all their data. Super-admin only.
+
+    Cleanup order is intentional:
+      1. Postgres (source of truth) - one transaction, all-or-nothing.
+         Order within the transaction: chat_messages -> chat_sessions ->
+         oauth_account -> users. Foreign keys would otherwise cascade-block.
+      2. Weaviate tenant (best-effort, logged on failure).
+      3. On-disk docs folder (best-effort, logged on failure).
+      4. Confirmation email (background task, already non-fatal on SMTP failure).
+
+    Reasoning: if Postgres delete succeeds, the user is GONE from the system's
+    point of view. Orphan Weaviate or disk data can be cleaned up later by a
+    sweep job; the opposite (cleanup succeeded but user row remains) would be
+    worse - they'd still be able to log in but their docs/vectors would be
+    gone, which is confusing.
+
+    Self-protection: an admin cannot delete themselves (lockout risk).
+
+    Email notification: sent AFTER deletion completes. The email is fire-and-
+    forget - if SMTP is down the deletion still succeeds.
+    """
+    if user_id == admin.id:
+        raise HTTPException(
+            status_code=400, detail="You cannot delete your own account."
+        )
+
+    # Look up the user first - we need the email for the confirmation email,
+    # and need to verify they actually exist before any cleanup.
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalars().unique().one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user_email = user.email  # capture before deletion
+
+    # --- Step 1: Postgres deletion (atomic) ---
+    # Order matters because of foreign-key constraints. SQLAlchemy core DELETE
+    # statements within one session.execute scope all participate in the same
+    # transaction that session.commit() seals.
+    from sqlalchemy import delete as sa_delete
+    from app.models import chat as chat_models  # chat_messages, chat_sessions
+    from app.models.user import OAuthAccount
+
+    try:
+        # Find the user's sessions so we can scope message deletion to them.
+        sessions_q = await session.execute(
+            select(chat_models.ChatSession.id).where(
+                chat_models.ChatSession.user_id == user_id
+            )
+        )
+        session_ids = [row[0] for row in sessions_q.all()]
+
+        if session_ids:
+            await session.execute(
+                sa_delete(chat_models.ChatMessage).where(
+                    chat_models.ChatMessage.session_id.in_(session_ids)
+                )
+            )
+            await session.execute(
+                sa_delete(chat_models.ChatSession).where(
+                    chat_models.ChatSession.id.in_(session_ids)
+                )
+            )
+
+        await session.execute(
+            sa_delete(OAuthAccount).where(OAuthAccount.user_id == user_id)
+        )
+        await session.execute(
+            sa_delete(User).where(User.id == user_id)
+        )
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        log.exception("Postgres deletion failed for user %s (%s)", user_id, user_email)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not delete user from database: {e}",
+        )
+
+    log.info("admin %s hard-deleted user %s (%s) from Postgres", admin.email, user_id, user_email)
+
+    # --- Step 2: Weaviate tenant cleanup (best-effort) ---
+    # delete_user_collection already swallows + logs exceptions, so this won't
+    # raise. We just call it and trust the logging.
+    delete_user_collection(user_id)
+
+    # --- Step 3: Disk cleanup (best-effort) ---
+    try:
+        delete_user_docs_dir(user_id)
+    except Exception as e:
+        log.warning("disk cleanup failed for user %s: %s", user_id, e)
+
+    # --- Step 4: Email the (now-deleted) user ---
+    subject, html_body, text_body = account_deleted_email()
+    background_tasks.add_task(send_email, user_email, subject, html_body, text_body)
+
+    return {
+        "status": "ok",
+        "email": user_email,
+        "user_id": str(user_id),
+    }
 
 
 # =============================================================================

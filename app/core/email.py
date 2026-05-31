@@ -292,3 +292,66 @@ def account_unsuspended_email() -> tuple[str, str, str]:
 </html>"""
 
     return subject, html_body, text_body
+
+
+def account_deleted_email() -> tuple[str, str, str]:
+    """Return (subject, html_body, text_body) notifying a user that their
+    account and all associated data have been permanently deleted.
+
+    Sent AFTER the deletion completes - so the user knows it happened and what
+    is gone. No "this was an error" recourse line because the deletion is
+    irreversible; we explicitly say so to set the right expectation.
+    """
+    subject = "Your CloudNest account has been deleted"
+
+    text_body = (
+        "Your CloudNest account has been deleted by an administrator.\n\n"
+        "What was removed:\n"
+        "  - Your account and login credentials\n"
+        "  - All your chat sessions and messages\n"
+        "  - All documents you uploaded\n"
+        "  - All vector data derived from those documents\n\n"
+        "This action is permanent and cannot be undone. If you believe this "
+        "was done in error, please contact your administrator. To use "
+        "CloudNest again you would need to create a new account."
+    )
+
+    html_body = f"""\
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#0f1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="max-width:480px;margin:40px auto;padding:0 20px;">
+    <div style="background:#171a21;border:1px solid #262b36;border-radius:16px;padding:36px;">
+      <div style="font-size:20px;font-weight:700;color:#22d3ee;margin-bottom:8px;">
+        CloudNest<span style="color:#6b7280;font-size:14px;">.ai</span>
+      </div>
+      <h1 style="font-size:20px;color:#f3f4f6;margin:24px 0 12px;">Your account has been deleted</h1>
+      <p style="font-size:14px;line-height:1.6;color:#9ca3af;margin:0 0 16px;">
+        An administrator has deleted your CloudNest account. All your data has
+        been permanently removed.
+      </p>
+      <div style="background:#1f2430;border:1px solid #262b36;border-radius:8px;padding:14px 16px;margin:16px 0;">
+        <p style="font-size:12px;line-height:1.4;color:#6b7280;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.05em;">What was removed</p>
+        <ul style="font-size:13px;line-height:1.7;color:#e5e7eb;margin:0;padding-left:18px;">
+          <li>Your account and login credentials</li>
+          <li>All your chat sessions and messages</li>
+          <li>All documents you uploaded</li>
+          <li>All vector data derived from those documents</li>
+        </ul>
+      </div>
+      <div style="background:#1f2430;border:1px solid #3b2530;border-radius:8px;padding:14px 16px;margin:16px 0;">
+        <p style="font-size:13px;line-height:1.6;color:#fca5a5;margin:0;">
+          This action is permanent and cannot be undone. If you believe this
+          was done in error, please contact your administrator. To use
+          CloudNest again you would need to create a new account.
+        </p>
+      </div>
+    </div>
+    <p style="text-align:center;font-size:11px;color:#4b5563;margin:20px 0;">
+      CloudNest.ai &middot; Conversational AI platform
+    </p>
+  </div>
+</body>
+</html>"""
+
+    return subject, html_body, text_body

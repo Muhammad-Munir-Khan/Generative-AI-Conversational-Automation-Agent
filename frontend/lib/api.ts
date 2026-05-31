@@ -468,6 +468,29 @@ export async function adminForceLogout(
   return res.json();
 }
 
+/**
+ * Hard-delete a user and all their data (Postgres rows, Weaviate tenant,
+ * uploaded files). Permanent and irreversible. The server enforces
+ * self-protection: an admin cannot delete their own account.
+ */
+export async function adminDeleteUser(
+  userId: string,
+): Promise<{ status: string; email: string; user_id: string }> {
+  const res = await apiFetch(`${API_URL}/admin/users/${userId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* noop */
+    }
+    throw new Error(`Delete user failed: ${detail}`);
+  }
+  return res.json();
+}
+
 /* ------------------------------ Admin: corpus ---------------------------- */
 
 export async function adminIngestCorpus(
