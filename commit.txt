@@ -1,0 +1,24 @@
+style(theme): refresh light-mode branding with purple accent palette
+
+- Replace light-theme indigo accents with purple (#7E57C2)
+- Update CSS variables:
+
+   --accent
+   --accent-bright
+   --accent-soft
+   --accent-glow
+   --accent-deco
+   --gradient-1
+   --gradient-2
+   --code-fg
+ Retune Tailwind accent remapping (hue 277 → 305) to align utility classes with the new palette
+ Replace hardcoded indigo values:
+
+   #4F46E5 → #7E57C2
+   #4338CA → #673AB7
+   #6366F1 → #9575CD
+- Preserve existing dark-theme cyan palette
+- Enhance landing page visual design, decorative patterns, and overall aesthetics
+- Refine authentication pages for visual consistency
+
+

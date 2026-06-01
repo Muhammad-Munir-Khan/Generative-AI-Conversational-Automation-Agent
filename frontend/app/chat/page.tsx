@@ -16,7 +16,6 @@ import {
   renameSession,
   streamAgent,
   transcribe,
-  ttsToBlob,
   type SessionInfo,
 } from "@/lib/api";
 import type {
@@ -35,13 +34,6 @@ import { Sidebar } from "@/components/Sidebar";
 import { EmptyState } from "@/components/EmptyState";
 import { Composer, type PendingAttachment } from "@/components/Composer";
 import { ChatMessageView } from "@/components/ChatMessage";
-import { AudioPlayer } from "@/components/AudioPlayer";
-
-interface AudioPayload {
-  blob: Blob;
-  mime: string;
-  forMessageId: string;
-}
 
 export default function Home() {
   const router = useRouter();
@@ -55,7 +47,6 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const [mode, setMode] = useState<Mode>("agent");
-  const [ttsEnabled, setTtsEnabled] = useState(false);
   const [ensembleEnabled, setEnsembleEnabled] = useState(false);
 
   const [pendingAttachment, setPendingAttachment] =
@@ -69,8 +60,6 @@ export default function Home() {
   const [liveTrace, setLiveTrace] = useState<TraceEntry[]>([]);
   const [liveAnswer, setLiveAnswer] = useState<string>("");
   const [liveMessageId, setLiveMessageId] = useState<string | null>(null);
-
-  const [audio, setAudio] = useState<AudioPayload | null>(null);
 
   const { theme, toggle: toggleTheme } = useTheme();
   const { language, setLanguage } = useLanguage();
@@ -138,7 +127,6 @@ export default function Home() {
       setMessages(replayed);
       setSessionId(id);
       setPendingAttachment(null);
-      setAudio(null);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to load chat");
     } finally {
@@ -150,7 +138,6 @@ export default function Home() {
     setMessages([]);
     setSessionId(uuid());
     setPendingAttachment(null);
-    setAudio(null);
   };
 
   const handleRenameSession = async (id: string, title: string) => {
@@ -191,7 +178,9 @@ export default function Home() {
     }
   };
 
-  /* ------------------------------ Voice ----------------------------------- */
+  /* ------------------------------ Voice (STT only) ------------------------ */
+  /* TTS is now per-message via <TTSButton> inside ChatMessageView. The
+   * sidebar global "speak responses" toggle has been removed. */
 
   const handleTranscribe = async (blob: Blob) => {
     try {
@@ -199,15 +188,6 @@ export default function Home() {
       if (result.text?.trim()) setPrefill(result.text);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Transcription failed");
-    }
-  };
-
-  const speakAnswer = async (text: string, forMessageId: string) => {
-    try {
-      const { blob, mime } = await ttsToBlob(text, language);
-      setAudio({ blob, mime, forMessageId });
-    } catch {
-      /* TTS optional — silent failure is fine */
     }
   };
 
@@ -247,7 +227,6 @@ export default function Home() {
           latencyMs: data.total_latency_ms,
         };
         setMessages((prev) => [...prev, assistantMsg]);
-        if (ttsEnabled) speakAnswer(data.verdict, assistantId);
         await refreshSessions();
         return;
       }
@@ -263,7 +242,6 @@ export default function Home() {
           latencyMs: data.latency_ms,
         };
         setMessages((prev) => [...prev, assistantMsg]);
-        if (ttsEnabled) speakAnswer(data.answer, assistantId);
       } else {
         // ---------- Agent mode (streaming + fallback) ---------------------
         try {
@@ -333,7 +311,6 @@ export default function Home() {
             latencyMs: final.latencyMs,
           };
           setMessages((prev) => [...prev, assistantMsg]);
-          if (ttsEnabled && answer) speakAnswer(answer, assistantId);
         } catch (streamErr) {
           console.warn("Stream failed, falling back to /agent/chat:", streamErr);
           const data = await agentChat({
@@ -352,7 +329,6 @@ export default function Home() {
             latencyMs: data.latency_ms,
           };
           setMessages((prev) => [...prev, assistantMsg]);
-          if (ttsEnabled) speakAnswer(data.answer, assistantId);
         }
       }
 
@@ -425,8 +401,6 @@ export default function Home() {
         error={healthError}
         mode={mode}
         setMode={setMode}
-        ttsEnabled={ttsEnabled}
-        setTtsEnabled={setTtsEnabled}
         ensembleEnabled={ensembleEnabled}
         setEnsembleEnabled={setEnsembleEnabled}
         onRefresh={refreshHealth}
@@ -456,12 +430,7 @@ export default function Home() {
             <div className="space-y-4 pb-4">
               {messages.map((m) => (
                 <div key={m.id} className="fade-in">
-                  <ChatMessageView message={m} />
-                  {audio && audio.forMessageId === m.id && (
-                    <div className="ml-11">
-                      <AudioPlayer blob={audio.blob} mime={audio.mime} />
-                    </div>
-                  )}
+                  <ChatMessageView message={m} language={language} />
                 </div>
               ))}
 
@@ -473,6 +442,7 @@ export default function Home() {
                       role: "assistant",
                       content: liveAnswer,
                     }}
+                    language={language}
                     liveTrace={{ entries: liveTrace, isLive: true }}
                     isStreaming
                   />

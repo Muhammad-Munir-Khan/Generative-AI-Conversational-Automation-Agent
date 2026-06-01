@@ -3,6 +3,7 @@
 import { Bot, User } from "lucide-react";
 import { MarkdownContent } from "./MarkdownContent";
 import type { ChatMessage as ChatMessageType } from "@/lib/types";
+import type { LanguageCode } from "@/lib/language";
 import { cn } from "@/lib/utils";
 import { AttachmentChip } from "./AttachmentChip";
 import { LatencyPill } from "./LatencyPill";
@@ -10,18 +11,28 @@ import { SourcesPanel } from "./SourcesPanel";
 import { ToolCallsPanel } from "./ToolCallsPanel";
 import { AgentTrace } from "./AgentTrace";
 import { EnsembleResponse } from "./EnsembleResponse";
+import { TTSButton } from "./TTSButton";
 
 export function ChatMessageView({
   message,
+  language,
   liveTrace,
   isStreaming,
 }: {
   message: ChatMessageType;
+  language: LanguageCode;
   liveTrace?: { entries: ChatMessageType["trace"]; isLive: boolean };
   isStreaming?: boolean;
 }) {
   const isUser = message.role === "user";
   const isEnsemble = !!message.ensemble;
+
+  /* For ensemble responses, the user-visible "answer" is the judge's verdict.
+   * For everything else, it's just message.content. We pass this into TTSButton
+   * so the right text gets spoken in both modes. */
+  const speakableText = isEnsemble
+    ? (message.ensemble?.verdict || "").trim()
+    : (message.content || "").trim();
 
   return (
     <div className={cn("flex gap-3 mb-5", isUser ? "flex-row-reverse" : "flex-row")}>
@@ -76,22 +87,34 @@ export function ChatMessageView({
           </div>
         </div>
 
-        {!isUser && !isStreaming && !isEnsemble && (
+        {!isUser && !isStreaming && (
           <div className="w-full">
-            {message.latencyMs !== undefined && <LatencyPill ms={message.latencyMs} />}
-            {message.trace && message.trace.length > 0 && (
-              <details className="mt-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-card)] overflow-hidden">
-                <summary className="px-3 py-2 text-xs text-[var(--fg-secondary)] hover:text-cyan-600 dark:hover:text-cyan-300 hover:bg-cyan-500/5 cursor-pointer flex items-center gap-2">
-                  <span className="font-mono text-[0.7rem]">🧠</span>
-                  Agent trace · {message.trace.length} step{message.trace.length === 1 ? "" : "s"}
-                </summary>
-                <div className="border-t border-[var(--border-subtle)] p-3 bg-[var(--bg-card)]">
-                  <AgentTrace entries={message.trace} isLive={false} />
-                </div>
-              </details>
+            {/* Action row: latency + per-message TTS. Sits directly below the
+             * bubble for assistant messages (including ensemble). */}
+            <div className="flex items-center gap-2 flex-wrap mt-1">
+              {message.latencyMs !== undefined && <LatencyPill ms={message.latencyMs} />}
+              {speakableText.length > 0 && (
+                <TTSButton text={speakableText} language={language} />
+              )}
+            </div>
+
+            {!isEnsemble && (
+              <>
+                {message.trace && message.trace.length > 0 && (
+                  <details className="mt-2 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-card)] overflow-hidden">
+                    <summary className="px-3 py-2 text-xs text-[var(--fg-secondary)] hover:text-cyan-600 dark:hover:text-cyan-300 hover:bg-cyan-500/5 cursor-pointer flex items-center gap-2">
+                      <span className="font-mono text-[0.7rem]">🧠</span>
+                      Agent trace · {message.trace.length} step{message.trace.length === 1 ? "" : "s"}
+                    </summary>
+                    <div className="border-t border-[var(--border-subtle)] p-3 bg-[var(--bg-card)]">
+                      <AgentTrace entries={message.trace} isLive={false} />
+                    </div>
+                  </details>
+                )}
+                <SourcesPanel sources={message.sources || []} />
+                <ToolCallsPanel toolCalls={message.toolCalls || []} />
+              </>
             )}
-            <SourcesPanel sources={message.sources || []} />
-            <ToolCallsPanel toolCalls={message.toolCalls || []} />
           </div>
         )}
       </div>
