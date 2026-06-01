@@ -1,6 +1,6 @@
 "use client";
 
-import { Cloud } from "lucide-react";
+import { Cloud, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState, type FormEvent } from "react";
@@ -10,28 +10,75 @@ import { ThemeToggleIcon } from "@/components/ThemeToggleIcon";
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-function Wordmark() {
+/* ============================================================================
+   Shared chrome - matches login/signup/forgot-password.
+   ========================================================================== */
+
+function Wordmark({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
+  const sizes = {
+    sm: { text: "text-base", tld: "text-[0.7rem]", icon: "w-4 h-4" },
+    md: { text: "text-lg", tld: "text-xs", icon: "w-[18px] h-[18px]" },
+    lg: { text: "text-xl", tld: "text-sm", icon: "w-5 h-5" },
+  };
+  const s = sizes[size];
   return (
     <div className="inline-flex items-baseline gap-1.5">
-      <Cloud
-        className="w-5 h-5 text-[var(--accent)] self-center"
-        strokeWidth={2.25}
-      />
+      <Cloud className={`${s.icon} text-[var(--accent)] self-center`} strokeWidth={2.25} />
       <span
-        className="text-xl font-bold bg-clip-text text-transparent tracking-tight"
-        style={{
-          backgroundImage:
-            "linear-gradient(135deg, var(--accent-bright), var(--accent))",
-        }}
+        className={`${s.text} font-bold bg-clip-text text-transparent tracking-tight`}
+        style={{ backgroundImage: "linear-gradient(135deg, var(--accent-bright), var(--accent))" }}
       >
         CloudNest
       </span>
-      <span className="text-sm font-mono text-[var(--fg-tertiary)] opacity-70 -ml-1">
-        .ai
-      </span>
+      <span className={`${s.tld} font-mono text-[var(--fg-tertiary)] opacity-70 -ml-1`}>.ai</span>
     </div>
   );
 }
+
+/* On /reset-password the right-hand CTA is "Sign in" - that's where the user
+ * lands after a successful reset. Same nav as /signup and /forgot-password. */
+function AuthNav() {
+  return (
+    <nav className="sticky top-0 z-50 backdrop-blur-md bg-[var(--bg-base)]/80 border-b border-[var(--border-subtle)]">
+      <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <Link href="/" aria-label="CloudNest home">
+          <Wordmark size="lg" />
+        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/#features"
+            className="hidden md:inline text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] transition px-3 py-1.5"
+          >
+            Features
+          </Link>
+          <Link
+            href="/#use-cases"
+            className="hidden md:inline text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] transition px-3 py-1.5"
+          >
+            Use cases
+          </Link>
+          <Link
+            href="/#stack"
+            className="hidden md:inline text-sm text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] transition px-3 py-1.5"
+          >
+            Stack
+          </Link>
+          <ThemeToggleIcon />
+          <Link
+            href="/login"
+            className="text-sm font-medium text-[var(--fg-primary)] border border-[var(--border-subtle)] hover:border-[var(--accent)]/40 transition px-4 py-1.5 rounded-md"
+          >
+            Sign in
+          </Link>
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+/* ============================================================================
+   Reset password form
+   ========================================================================== */
 
 function ResetPasswordForm() {
   const router = useRouter();
@@ -41,6 +88,7 @@ function ResetPasswordForm() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<"validation" | "bad-token" | "network">("validation");
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
 
@@ -50,14 +98,17 @@ function ResetPasswordForm() {
 
     if (!token) {
       setError("Missing or invalid reset link. Please request a new one.");
+      setErrorKind("bad-token");
       return;
     }
     if (password !== confirm) {
       setError("Passwords don't match.");
+      setErrorKind("validation");
       return;
     }
     if (password.length < 8) {
       setError("Password must be at least 8 characters.");
+      setErrorKind("validation");
       return;
     }
 
@@ -77,33 +128,29 @@ function ResetPasswordForm() {
         const reason = data?.detail;
         if (typeof reason === "string" && reason.includes("RESET_PASSWORD_BAD_TOKEN")) {
           setError("This reset link is invalid or has expired. Request a new one.");
+          setErrorKind("bad-token");
         } else if (typeof reason === "string" && reason.includes("PASSWORD")) {
           setError("Password doesn't meet requirements. Use at least 8 characters.");
+          setErrorKind("validation");
         } else {
           setError("This reset link is invalid or has expired. Request a new one.");
+          setErrorKind("bad-token");
         }
       }
     } catch {
       setError("Network error. Is the backend running?");
+      setErrorKind("network");
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-[var(--bg-base)] flex items-center justify-center px-4">
-      <div className="absolute top-5 right-5 z-10">
-        <ThemeToggleIcon />
-      </div>
-
+    <div className="relative flex-1 flex items-center justify-center px-4 py-12">
       <div
         className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] rounded-full opacity-20 blur-3xl pointer-events-none"
-        style={{
-          background:
-            "radial-gradient(circle, var(--accent-bright) 0%, transparent 65%)",
-        }}
+        style={{ background: "radial-gradient(circle, var(--accent-bright) 0%, transparent 65%)" }}
       />
-
       <div
         className="absolute inset-0 opacity-[0.025] pointer-events-none"
         style={{
@@ -113,32 +160,30 @@ function ResetPasswordForm() {
         }}
       />
 
-      <div className="relative w-full max-w-md">
+      <div className="relative w-full max-w-md fade-in-mount">
         <div className="mb-8 text-center">
-          <Link href="/" aria-label="CloudNest home" className="inline-block">
-            <Wordmark />
-          </Link>
-          <h1 className="mt-6 text-2xl font-bold tracking-tight text-[var(--fg-primary)]">
+          <h1 className="text-3xl font-bold tracking-tight text-[var(--fg-primary)]">
             Set a new password
           </h1>
-          <p className="mt-1.5 text-sm text-[var(--fg-secondary)]">
+          <p className="mt-2 text-sm text-[var(--fg-secondary)]">
             Choose a strong password for your account.
           </p>
+          <div
+            className="mx-auto mt-4 h-[2px] w-20 rounded-full"
+            style={{ background: "linear-gradient(90deg, transparent, var(--accent), transparent)" }}
+          />
         </div>
 
         <div className="relative">
           <div
             className="absolute inset-0 rounded-2xl opacity-30 blur-xl pointer-events-none"
-            style={{
-              background:
-                "linear-gradient(135deg, var(--accent-bright), var(--accent))",
-            }}
+            style={{ background: "linear-gradient(135deg, var(--accent-bright), var(--accent))" }}
           />
 
           {done ? (
             <div className="relative bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl p-7 shadow-2xl text-center">
               <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
-                <Cloud className="w-6 h-6 text-emerald-500" strokeWidth={2} />
+                <ShieldCheck className="w-6 h-6 text-emerald-500" strokeWidth={2} />
               </div>
               <h2 className="text-base font-semibold text-[var(--fg-primary)] mb-2">
                 Password updated
@@ -189,17 +234,43 @@ function ResetPasswordForm() {
               </label>
 
               {error && (
-                <div className="text-xs text-red-500 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2.5">
+                <div
+                  className={
+                    "text-xs rounded-lg px-3 py-2.5 border " +
+                    (errorKind === "bad-token"
+                      ? "text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/30"
+                      : "text-red-500 bg-red-500/10 border-red-500/30")
+                  }
+                  role="alert"
+                >
                   {error}
+                  {errorKind === "bad-token" && (
+                    <>
+                      {" "}
+                      <Link
+                        href="/forgot-password"
+                        className="underline underline-offset-2 hover:text-amber-600 dark:hover:text-amber-200"
+                      >
+                        Request a new link
+                      </Link>
+                    </>
+                  )}
                 </div>
               )}
 
               <button
                 type="submit"
                 disabled={submitting || !password || !confirm}
-                className="w-full py-2.5 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-bright)] text-white text-sm font-medium transition-all shadow-lg shadow-[var(--accent)]/20 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+                className="w-full py-2.5 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-bright)] text-white text-sm font-medium transition-all shadow-lg shadow-[var(--accent)]/20 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none flex items-center justify-center gap-2"
               >
-                {submitting ? "Updating..." : "Update password"}
+                {submitting ? (
+                  <>
+                    <span className="block w-3.5 h-3.5 rounded-full border-2 border-white/80 border-t-transparent animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  "Update password"
+                )}
               </button>
 
               <div className="text-center text-xs text-[var(--fg-tertiary)] pt-1">
@@ -213,17 +284,34 @@ function ResetPasswordForm() {
             </form>
           )}
         </div>
+
+        <div className="mt-6 text-center text-[0.65rem] font-mono uppercase tracking-wider text-[var(--fg-muted)]">
+          one-time token &middot; one-hour expiry &middot; bcrypt hashed
+        </div>
       </div>
+
+      <style jsx>{`
+        @keyframes fade-in-mount {
+          from { opacity: 0; transform: translateY(8px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in-mount {
+          animation: fade-in-mount 0.5s ease-out;
+        }
+      `}</style>
     </div>
   );
 }
 
-// useSearchParams() requires a Suspense boundary in Next.js production builds.
-// The page export wraps the form in Suspense so static prerendering succeeds.
+/* useSearchParams() requires a Suspense boundary in Next.js production builds.
+ * The page export wraps the form in Suspense so static prerendering succeeds. */
 export default function ResetPasswordPage() {
   return (
-    <Suspense fallback={null}>
-      <ResetPasswordForm />
-    </Suspense>
+    <div className="min-h-screen flex flex-col bg-[var(--bg-base)]">
+      <AuthNav />
+      <Suspense fallback={null}>
+        <ResetPasswordForm />
+      </Suspense>
+    </div>
   );
 }

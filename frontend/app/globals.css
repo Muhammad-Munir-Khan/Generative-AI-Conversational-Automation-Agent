@@ -30,8 +30,8 @@
   --bg-bubble-assistant: #ffffff;
 
   /* Background gradients */
-  --gradient-1: rgb(79 70 229 / 0.06);
-  --gradient-2: rgb(79 70 229 / 0.03);
+  --gradient-1: rgb(126 87 194 / 0.06);
+  --gradient-2: rgb(126 87 194 / 0.03);
 
   /* Borders */
   --border-subtle: rgb(0 0 0 / 0.06);
@@ -46,15 +46,15 @@
 
   /* Code / pre */
   --code-bg: #f1f5f9;
-  --code-fg: #4f46e5;
+  --code-fg: #7E57C2;
   --pre-bg: #f8fafc;
 
   /* Accent — INDIGO in light mode */
-  --accent: #4f46e5;
-  --accent-bright: #6366f1;
-  --accent-soft: rgb(79 70 229 / 0.1);
-  --accent-glow: rgb(79 70 229 / 0.35);
-  --accent-deco: rgb(79 70 229 / 0.4);
+  --accent: #7E57C2;
+  --accent-bright: #9575CD;
+  --accent-soft: rgb(126 87 194 / 0.1);
+  --accent-glow: rgb(126 87 194 / 0.35);
+  --accent-deco: rgb(126 87 194 / 0.4);
 }
 
 html.dark {
@@ -300,8 +300,8 @@ html:not(.dark) {
   --color-cyan-200: oklch(0.87 0.065 274.039);
   --color-cyan-300: oklch(0.785 0.115 274.713);
   --color-cyan-400: oklch(0.673 0.182 276.935);
-  --color-cyan-500: oklch(0.585 0.233 277.117); /* indigo-600 ≈ #4f46e5 */
-  --color-cyan-600: oklch(0.511 0.262 276.966); /* indigo-700 ≈ #4338ca */
+  --color-cyan-500: oklch(0.585 0.233 277.117); /* indigo-600 ≈ #7E57C2 */
+  --color-cyan-600: oklch(0.511 0.262 276.966); /* indigo-700 ≈ #673AB7 */
   --color-cyan-700: oklch(0.457 0.24 277.023);
   --color-cyan-800: oklch(0.398 0.195 277.366);
   --color-cyan-900: oklch(0.359 0.144 278.697);
@@ -311,32 +311,32 @@ html:not(.dark) {
 /* 2) USER MESSAGE BUBBLE — Tailwind's `from-cyan-500 to-cyan-700` gradient
       remaps muddy in light mode, so we explicitly set a vivid indigo gradient. */
 html:not(.dark) .bg-gradient-to-br.from-cyan-500.to-cyan-700 {
-  background-image: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%) !important;
+  background-image: linear-gradient(135deg, #7E57C2 0%, #673AB7 100%) !important;
   color: #ffffff !important;
-  box-shadow: 0 4px 16px rgb(79 70 229 / 0.35) !important;
+  box-shadow: 0 4px 16px rgb(126 87 194 / 0.35) !important;
 }
 
 /* 3) HERO "documents" gradient — make it crisp indigo not washed-out */
 html:not(.dark) .bg-gradient-to-br.from-cyan-300.to-cyan-500 {
-  background-image: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+  background-image: linear-gradient(135deg, #9575CD 0%, #7E57C2 100%) !important;
 }
 
 /* 4) ATTACHMENT CHIPS — explicit indigo tint instead of a remapped cyan haze */
 html:not(.dark) .bg-cyan-500\/10 {
-  background-color: rgb(79 70 229 / 0.1) !important;
+  background-color: rgb(126 87 194 / 0.1) !important;
 }
 html:not(.dark) .bg-cyan-500\/20 {
-  background-color: rgb(79 70 229 / 0.15) !important;
+  background-color: rgb(126 87 194 / 0.15) !important;
 }
 
 /* 5) AGENT TRACE TIMELINE — left guide line and step-dot border */
 html:not(.dark) .border-cyan-400 {
-  border-color: #4f46e5 !important;
+  border-color: #7E57C2 !important;
 }
 
 /* 6) SOURCES & TOOL-CALL CARDS — left rail accent */
 html:not(.dark) .border-l-cyan-500 {
-  border-left-color: #4f46e5 !important;
+  border-left-color: #7E57C2 !important;
 }
 
 /* 7) Card surfaces inside expanders — components use bg-slate-900/60 which
@@ -353,7 +353,7 @@ html:not(.dark) details pre,
 html:not(.dark) [class*="bg-black/30"] {
   background-color: #f1f5f9 !important;
   color: #334155 !important;
-  border: 1px solid rgb(79 70 229 / 0.15) !important;
+  border: 1px solid rgb(126 87 194 / 0.15) !important;
 }
 
 /* 9) Expander summary headers ("🧠 Agent trace · N steps", "📎 Sources") */
@@ -361,8 +361,8 @@ html:not(.dark) details summary {
   color: #475569 !important;
 }
 html:not(.dark) details summary:hover {
-  color: #4f46e5 !important;
-  background-color: rgb(79 70 229 / 0.06) !important;
+  color: #7E57C2 !important;
+  background-color: rgb(126 87 194 / 0.06) !important;
 }
 
 /* 10) Slate text used for secondary labels */
@@ -381,16 +381,16 @@ html:not(.dark) [aria-label="Attach file"],
 html:not(.dark) [aria-label="Start recording"],
 html:not(.dark) [aria-label="Stop"] {
   background: #ffffff !important;
-  border-color: rgb(79 70 229 / 0.25) !important;
-  color: #4f46e5 !important;
+  border-color: rgb(126 87 194 / 0.25) !important;
+  color: #7E57C2 !important;
 }
 
 html:not(.dark) [aria-label="Attach file"]:hover,
 html:not(.dark) [aria-label="Start recording"]:hover {
-  background: rgb(79 70 229 / 0.08) !important;
-  border-color: rgb(79 70 229 / 0.5) !important;
-  color: #4338ca !important;
-  box-shadow: 0 0 12px rgb(79 70 229 / 0.3) !important;
+  background: rgb(126 87 194 / 0.08) !important;
+  border-color: rgb(126 87 194 / 0.5) !important;
+  color: #673AB7 !important;
+  box-shadow: 0 0 12px rgb(126 87 194 / 0.3) !important;
 }
 
 /* MIC button while recording stays red — that's a status color, not a brand
@@ -398,13 +398,13 @@ html:not(.dark) [aria-label="Start recording"]:hover {
 
 /* SEND BUTTON — solid indigo with glow */
 html:not(.dark) [aria-label="Send"]:not(:disabled) {
-  background-color: #4f46e5 !important;
+  background-color: #7E57C2 !important;
   color: #ffffff !important;
-  box-shadow: 0 4px 14px rgb(79 70 229 / 0.4) !important;
+  box-shadow: 0 4px 14px rgb(126 87 194 / 0.4) !important;
 }
 html:not(.dark) [aria-label="Send"]:not(:disabled):hover {
-  background-color: #4338ca !important;
-  box-shadow: 0 6px 18px rgb(79 70 229 / 0.5) !important;
+  background-color: #673AB7 !important;
+  box-shadow: 0 6px 18px rgb(126 87 194 / 0.5) !important;
 }
 html:not(.dark) [aria-label="Send"]:disabled {
   background-color: #e5e7eb !important;
@@ -435,13 +435,13 @@ html:not(.dark) .bg-slate-900\/60 {
 /* Play/pause circular button inside the audio chip */
 html:not(.dark) [aria-label="Play"],
 html:not(.dark) [aria-label="Pause"] {
-  background-color: rgb(79 70 229 / 0.12) !important;
-  border-color: rgb(79 70 229 / 0.4) !important;
-  color: #4f46e5 !important;
+  background-color: rgb(126 87 194 / 0.12) !important;
+  border-color: rgb(126 87 194 / 0.4) !important;
+  color: #7E57C2 !important;
 }
 
 html:not(.dark) [aria-label="Play"]:hover,
 html:not(.dark) [aria-label="Pause"]:hover {
-  background-color: rgb(79 70 229 / 0.2) !important;
-  border-color: rgb(79 70 229 / 0.55) !important;
+  background-color: rgb(126 87 194 / 0.2) !important;
+  border-color: rgb(126 87 194 / 0.55) !important;
 }
