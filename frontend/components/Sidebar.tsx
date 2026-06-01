@@ -2,6 +2,8 @@
 
 import {
   Bot,
+  ChevronRight,
+  Cloud,
   FileText,
   Languages,
   Palette,
@@ -72,18 +74,74 @@ export function Sidebar({
 
   return (
     <aside className="w-[280px] shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-sidebar)] px-5 py-6 sticky top-0 h-screen overflow-y-auto flex flex-col">
-      {/* ---------- Admin entry point (admins only) ---------- */}
-      {isAdmin && (
-        <Link
-          href="/admin"
-          className="mb-5 flex items-center gap-2 px-3 py-2.5 rounded-md text-xs font-semibold text-white transition-all shadow-lg shadow-[var(--accent)]/20 hover:shadow-xl hover:shadow-[var(--accent)]/30 hover:-translate-y-px"
+      {/* ---------- Wordmark ---------- */}
+      <Link
+        href="/"
+        aria-label="CloudNest home"
+        className="inline-flex items-baseline gap-1.5 mb-6 group w-fit"
+      >
+        <Cloud
+          className="w-[18px] h-[18px] text-[var(--accent)] self-center transition-transform group-hover:scale-110"
+          strokeWidth={2.25}
+        />
+        <span
+          className="text-lg font-bold bg-clip-text text-transparent tracking-tight"
           style={{
-            background:
+            backgroundImage:
               "linear-gradient(135deg, var(--accent-bright), var(--accent))",
           }}
         >
-          <Shield className="w-3.5 h-3.5" />
-          Switch to Admin Panel
+          CloudNest
+        </span>
+        <span className="text-xs font-mono text-[var(--fg-tertiary)] opacity-70 -ml-1">
+          .ai
+        </span>
+      </Link>
+
+      {/* ---------- Admin entry point (admins only) ----------
+       * Robust premium-feel admin button:
+       *   - explicit RGB colors so it can't blend with sidebar background
+       *   - clear color separation (deep indigo/purple gradient -> white text)
+       *   - "ADMIN ACCESS" microcopy + "Switch to panel" action
+       *   - shield badge with subtle ring
+       *   - chevron arrow nudges right on hover
+       *   - 2px lift + shadow growth on hover
+       */}
+      {isAdmin && (
+        <Link
+          href="/admin"
+          className="group relative mb-6 flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg text-white transition-all duration-200 shadow-md hover:shadow-lg hover:-translate-y-0.5"
+          style={{
+            background:
+              "linear-gradient(135deg, var(--accent-bright) 0%, var(--accent) 100%)",
+            boxShadow:
+              "0 4px 14px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.18)",
+          }}
+        >
+          <span
+            className="shrink-0 w-7 h-7 rounded-md flex items-center justify-center"
+            style={{
+              background: "rgba(255, 255, 255, 0.15)",
+              border: "1px solid rgba(255, 255, 255, 0.25)",
+            }}
+          >
+            <Shield className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
+          </span>
+          <span className="flex-1 min-w-0 flex flex-col">
+            <span
+              className="text-[0.6rem] font-mono tracking-[0.16em] uppercase leading-none mb-1"
+              style={{ color: "rgba(255, 255, 255, 0.75)" }}
+            >
+              Admin Access
+            </span>
+            <span className="text-xs font-semibold text-white leading-none">
+              Switch to panel
+            </span>
+          </span>
+          <ChevronRight
+            className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5"
+            style={{ color: "rgba(255, 255, 255, 0.75)" }}
+          />
         </Link>
       )}
 
