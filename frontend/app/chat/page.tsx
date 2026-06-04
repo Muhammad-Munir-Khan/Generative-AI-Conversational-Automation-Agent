@@ -65,6 +65,7 @@ export default function Home() {
   const { language, setLanguage } = useLanguage();
 
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
+  const sessionIdRef = useRef<string>("");
 
   /* --------------- Auth gating: kick out anon users to /login ----------- */
   useEffect(() => {
@@ -72,6 +73,11 @@ export default function Home() {
       router.replace("/login");
     }
   }, [authLoading, user, router]);
+
+  useEffect(() => {
+    console.log("[SYNC] sessionIdRef updated:", sessionId);
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   const refreshHealth = useCallback(async () => {
     try {
@@ -96,8 +102,6 @@ export default function Home() {
   }, [sessionId]);
 
   useEffect(() => {
-    // Only fetch health / sessions once we know the user is authenticated;
-    // otherwise we'd race the redirect with a flurry of 401-and-redirect cycles.
     if (!user) return;
     refreshHealth();
     refreshSessions();
@@ -127,6 +131,7 @@ export default function Home() {
       setMessages(replayed);
       setSessionId(id);
       setPendingAttachment(null);
+      setPrefill(undefined);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to load chat");
     } finally {
@@ -135,9 +140,15 @@ export default function Home() {
   };
 
   const handleNewChat = () => {
+    console.log(
+      "[NEW_CHAT] clearing. old session:", sessionId,
+      "| prefill was:", JSON.stringify(prefill),
+    );
     setMessages([]);
     setSessionId(uuid());
     setPendingAttachment(null);
+    setPrefill(undefined);
+    console.log("[NEW_CHAT] setPrefill(undefined) called");
   };
 
   const handleRenameSession = async (id: string, title: string) => {
@@ -179,14 +190,28 @@ export default function Home() {
   };
 
   /* ------------------------------ Voice (STT only) ------------------------ */
-  /* TTS is now per-message via <TTSButton> inside ChatMessageView. The
-   * sidebar global "speak responses" toggle has been removed. */
 
   const handleTranscribe = async (blob: Blob) => {
+    const startedSession = sessionIdRef.current;
+    console.log("[TRANSCRIBE] start. session at start:", startedSession);
     try {
       const result = await transcribe(blob);
-      if (result.text?.trim()) setPrefill(result.text);
+      console.log(
+        "[TRANSCRIBE] resolved. text:", JSON.stringify(result.text?.slice(0, 40)),
+        "| session now:", sessionIdRef.current,
+        "| started:", startedSession,
+        "| match:", sessionIdRef.current === startedSession,
+      );
+      if (sessionIdRef.current !== startedSession) {
+        console.log("[TRANSCRIBE] DROPPED — session changed");
+        return;
+      }
+      if (result.text?.trim()) {
+        console.log("[TRANSCRIBE] calling setPrefill");
+        setPrefill(result.text);
+      }
     } catch (e) {
+      console.error("[TRANSCRIBE] error:", e);
       alert(e instanceof Error ? e.message : "Transcription failed");
     }
   };
@@ -216,7 +241,6 @@ export default function Home() {
     setBusy(true);
 
     try {
-      // ---------- Multi-LLM ensemble (bypasses agent + RAG entirely) -----
       if (ensembleEnabled) {
         const data = await ensembleChat(text, language);
         const assistantMsg: ChatMessage = {
@@ -231,7 +255,6 @@ export default function Home() {
         return;
       }
 
-      // ---------- RAG mode ------------------------------------------------
       if (mode === "rag") {
         const data = await ragQuery(text, language);
         const assistantMsg: ChatMessage = {
@@ -243,7 +266,6 @@ export default function Home() {
         };
         setMessages((prev) => [...prev, assistantMsg]);
       } else {
-        // ---------- Agent mode (streaming + fallback) ---------------------
         try {
           const traceList: TraceEntry[] = [];
           let answer = "";
@@ -374,8 +396,6 @@ export default function Home() {
   const showEnsembleLoading =
     busy && ensembleEnabled && liveMessageId !== null;
 
-  /* --------------- Loading / unauthenticated states -------------------- */
-
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[var(--bg-base)]">
@@ -387,12 +407,13 @@ export default function Home() {
   }
 
   if (!user) {
-    // useEffect above is already redirecting; render nothing for the split second
-    // between detection and navigation completing.
     return null;
   }
 
-  /* ------------------------------ Main UI ------------------------------ */
+  console.log(
+    "[RENDER] sessionId:", sessionId,
+    "| prefill:", JSON.stringify(prefill),
+  );
 
   return (
     <div className="flex min-h-screen">

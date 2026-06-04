@@ -38,7 +38,7 @@ from app.core.llm import get_llm
 from app.core.logging import get_logger
 from app.core.observability import get_langfuse_handler
 from app.core.schemas import AgentResponse, SourceInfo, ToolCall
-from app.rag.user_context import reset_current_user, set_current_user
+from app.rag.user_context import get_current_user, reset_current_user, set_current_user
 from app.tools.registry import get_tools
 
 log = get_logger(__name__)
@@ -321,6 +321,10 @@ def run_agent(
 
     Sets the current_user contextvar so RAG tools (document_search,
     document_summarizer) and retrieval.py can scope queries to this user.
+
+    This runs synchronously start-to-finish in a single context, so the
+    token-based set/reset is safe here (unlike stream_agent, which is a
+    generator pumped across contexts - see the note there).
     """
     token = set_current_user(user_id)
     try:
@@ -372,12 +376,19 @@ def stream_agent(
 ):
     """Stream agent execution as a sequence of events.
 
-    Sets the current_user contextvar for the duration of the stream, so any
-    tool calls invoked during execution see the right user. The contextvar
-    is reset in the finally block to guarantee cleanup even if the consumer
-    abandons the generator partway through.
+    Sets the current_user contextvar for the duration of the stream so any
+    tool calls invoked during execution see the right user.
+
+    NOTE: this is a sync generator consumed by StreamingResponse, which pumps
+    it on threadpool threads. A contextvar Token is bound to the context that
+    created it, so reset_current_user(token) in a finally could run in a
+    DIFFERENT context than set_current_user ran in -> "Token was created in a
+    different Context", which crashed the stream and forced the client to fall
+    back to /agent/chat. We therefore capture the previous value and restore it
+    by *setting* it back (context-safe) instead of resetting a token.
     """
-    token = set_current_user(user_id)
+    previous_user = get_current_user()
+    set_current_user(user_id)
     try:
         t0 = time.time()
         history = memory.get(session_id, user_id=user_id)
@@ -466,4 +477,4 @@ def stream_agent(
 
         _maybe_generate_title(session_id, user_id, message, answer)
     finally:
-        reset_current_user(token)
+        set_current_user(previous_user)

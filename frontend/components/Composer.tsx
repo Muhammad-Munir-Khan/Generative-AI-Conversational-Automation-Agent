@@ -37,8 +37,14 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // Sync the textarea to the prefill prop. Crucially this also CLEARS the box
+  // when prefill becomes undefined (new chat, session switch, post-submit) —
+  // the old `if (prefill) setText(prefill)` only ever wrote, never cleared, so
+  // a transcript left the textarea populated across a New Chat. Typing does not
+  // touch prefill, so manual input is never wiped (effect only fires when the
+  // prefill value itself changes).
   useEffect(() => {
-    if (prefill) setText(prefill);
+    setText(prefill ?? "");
   }, [prefill]);
 
   useEffect(() => {

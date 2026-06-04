@@ -1,19 +1,15 @@
-fix(ui): theme-track admin button + Hero, refresh stale Hero content
+fix: repair summarizer crash and ensemble empty-verdict bug
 
-ADMIN BUTTON (Sidebar.tsx):
-- Swap hardcoded purple gradient for CSS variables so the button
-  tracks the current theme: purple in light, cyan in dark
-- background uses var(--accent-bright) -> var(--accent)
-- boxShadow uses var(--accent-glow) for outer glow
-- Flat structure (no overflow-hidden + absolute overlays) preserved
-  so the button stays reliably visible across themes
+Two runtime bugs found during multilingual testing.
 
-HERO (Hero.tsx):
-- Replace hardcoded cyan-* classes with var(--accent) / var(--accent-bright)
-  on the status line, pulse dot, "AI workspace" gradient, and bottom rail
-- Update stale stack chips: replace Chroma with Weaviate, add BGE-M3 and
-  Ollama (which weren't shown before)
-- Update copy: "37 languages" -> "100+ languages for retrieval (37 voices
-  for TTS)" to honestly capture both numbers
-- Update provider list: "Groq and OpenRouter" -> "Groq, OpenRouter, and
-  Ollama"
+ensemble: judge returned "(no verdict)" for some languages (e.g. Japanese)
+because the language directive made it translate JSON keys / drop the
+verdict. Now keeps keys in English with values in the target language,
+extracts the outermost {...} with a regex (replacing a buggy lstrip that
+could corrupt JSON), and falls back to the longest candidate when the
+verdict is empty.
+
+summarizer: document_summarizer crashed with AttributeError — it used the
+old Chroma `_collection.get()` API against the Weaviate store. Added a
+tenant-scoped fetch_all_for() helper to collections.py and switched the
+tool to use it.
