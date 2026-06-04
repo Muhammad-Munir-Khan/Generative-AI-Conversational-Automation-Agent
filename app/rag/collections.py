@@ -213,6 +213,38 @@ def search_for(user_id: str | uuid.UUID, query: str, k: int):
     )
 
 
+def fetch_all_for(user_id: str | uuid.UUID, limit: int = 1000) -> list:
+    """Fetch ALL chunks in the user's tenant as LangChain Documents.
+
+    Unlike search_for (similarity search), this returns every object in the
+    tenant - used by document_summarizer, which needs the whole document or
+    corpus rather than the top-k for a query. Returns [] if the tenant doesn't
+    exist (no uploads yet, or a background job under SYSTEM_USER_ID).
+
+    `limit` caps how many objects we pull so a huge corpus can't blow up memory
+    or the prompt; callers (the summarizer) truncate the combined text anyway.
+    """
+    from langchain_core.documents import Document
+
+    try:
+        if not _tenant_exists(user_id):
+            return []
+        client = get_weaviate_client()
+        coll = client.collections.get(settings.weaviate_index_name)
+        tenant_coll = coll.with_tenant(tenant_for(user_id))
+        res = tenant_coll.query.fetch_objects(limit=limit)
+        docs: list[Document] = []
+        for obj in res.objects:
+            props = obj.properties or {}
+            text = props.get("text", "")
+            meta = {k: v for k, v in props.items() if k != "text"}
+            docs.append(Document(page_content=text, metadata=meta))
+        return docs
+    except Exception as e:
+        log.debug("fetch_all_for failed: %s", e)
+        return []
+
+
 def count_for(user_id: str | uuid.UUID) -> int:
     """Number of objects (chunks) in the user's tenant. 0 if tenant absent."""
     try:

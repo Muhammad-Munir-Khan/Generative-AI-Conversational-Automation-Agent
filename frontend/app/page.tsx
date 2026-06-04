@@ -1297,7 +1297,7 @@ function SiteFooter() {
               rel="noopener noreferrer"
               className="text-[var(--fg-secondary)] hover:text-[var(--accent)] transition font-semibold"
             >
-              Munir
+              Muhammad Munir Khan
             </a>
           </span>
           <span className="text-[var(--border-subtle)]">|</span>

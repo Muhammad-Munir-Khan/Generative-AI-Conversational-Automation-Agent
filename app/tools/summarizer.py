@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 
 from app.core.llm import get_llm
-from app.rag.collections import get_user_vectorstore
+from app.rag.collections import fetch_all_for
 from app.rag.user_context import get_current_user
 
 SUMMARY_PROMPT = """You are a precise document summarizer. Summarize the text below.
@@ -30,14 +30,14 @@ LENGTH_PRESETS = {
 
 
 def _gather_chunks(filename: str | None) -> list[Document]:
-    """Pull all chunks from the CURRENT user's collection, optionally filtered."""
+    """Pull all chunks from the CURRENT user's tenant, optionally filtered.
+
+    Uses the tenant-scoped fetch_all_for helper in collections.py (the single
+    choke point for per-user Weaviate access) rather than touching the store
+    internals directly.
+    """
     user_id = get_current_user()
-    store = get_user_vectorstore(user_id)
-    raw = store._collection.get(include=["documents", "metadatas"])
-    docs = [
-        Document(page_content=text, metadata=meta or {})
-        for text, meta in zip(raw["documents"], raw["metadatas"])
-    ]
+    docs = fetch_all_for(user_id)
     if filename:
         target = filename.strip().lower()
         docs = [

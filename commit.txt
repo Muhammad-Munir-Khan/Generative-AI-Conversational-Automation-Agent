@@ -1,11 +1,19 @@
-feat(tts): move TTS from global toggle to per-message buttons
+fix(ui): theme-track admin button + Hero, refresh stale Hero content
 
-- New TTSButton component: idle/loading/playing states, blob caching,
-  CustomEvent-based coordination so only one message plays at a time
-- ChatMessage now renders TTSButton in the action row of every assistant
-  message (including ensemble verdicts), passing the current language
-- Sidebar drops the "Voice / Speak responses" toggle section, dropping
-  the ttsEnabled / setTtsEnabled props and the Volume2 import
-- chat/page.tsx drops ttsEnabled state, speakAnswer auto-call,
-  audio state, AudioPlayer rendering, and ttsToBlob import
-- AudioPlayer.tsx is left in place but no longer referenced
+ADMIN BUTTON (Sidebar.tsx):
+- Swap hardcoded purple gradient for CSS variables so the button
+  tracks the current theme: purple in light, cyan in dark
+- background uses var(--accent-bright) -> var(--accent)
+- boxShadow uses var(--accent-glow) for outer glow
+- Flat structure (no overflow-hidden + absolute overlays) preserved
+  so the button stays reliably visible across themes
+
+HERO (Hero.tsx):
+- Replace hardcoded cyan-* classes with var(--accent) / var(--accent-bright)
+  on the status line, pulse dot, "AI workspace" gradient, and bottom rail
+- Update stale stack chips: replace Chroma with Weaviate, add BGE-M3 and
+  Ollama (which weren't shown before)
+- Update copy: "37 languages" -> "100+ languages for retrieval (37 voices
+  for TTS)" to honestly capture both numbers
+- Update provider list: "Groq and OpenRouter" -> "Groq, OpenRouter, and
+  Ollama"
