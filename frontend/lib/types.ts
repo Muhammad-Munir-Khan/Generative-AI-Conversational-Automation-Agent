@@ -8,7 +8,7 @@ export interface HealthResponse {
   status: string;
   version: string;
   provider: string;
-  llm_model: string;
+  ollama_chat_model: string;
   embedding_model: string;
   voice_enabled: boolean;
   tts_backend: string;

@@ -44,8 +44,15 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
+    env_file:
+      - ../.env
     entrypoint: >
-      /bin/sh -c "OLLAMA_HOST=http://ollama:11434 ollama pull ${LLM_MODEL:-llama3.2:3b}"
+      /bin/sh -c "if [ -n \"$${OLLAMA_CHAT_MODEL}\" ]; then
+                    OLLAMA_HOST=http://ollama:11434 ollama pull $${OLLAMA_CHAT_MODEL};
+                  fi &&
+                  if [ -n \"$${OLLAMA_VISION_MODEL}\" ]; then
+                    OLLAMA_HOST=http://ollama:11434 ollama pull $${OLLAMA_VISION_MODEL};
+                  fi"
     restart: "no"
 
   # --- Weaviate (vector store, native multi-tenancy) -----------------------

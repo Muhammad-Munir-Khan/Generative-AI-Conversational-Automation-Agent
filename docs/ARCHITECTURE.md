@@ -131,7 +131,7 @@ A shared `hf_cache` volume prevents re-downloading the embedding model on every 
 | Want to... | Touch... |
 |---|---|
 | Add a tool | `app/tools/your_tool.py` + `registry.py` |
-| Swap the LLM | `LLM_MODEL` env var, or `app/core/llm.py` for a non-Ollama backend |
+| Swap the LLM | `ollama_chat_model` env var, or `app/core/llm.py` for a non-Ollama backend |
 | Use a different vector DB | `app/rag/retrieval.py` and `app/rag/ingestion.py` |
 | Add streaming | Switch `/agent/chat` to `StreamingResponse` and use `agent.astream_events` |
 | Persist memory across restarts | Replace `MemoryStore` internals with Redis |

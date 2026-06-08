@@ -1,175 +1,166 @@
 """Application settings, overridable via environment variables or .env."""
-from pathlib import Path
 
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        case_sensitive=False
+    )
 
-    # Paths
     data_dir: Path = PROJECT_ROOT / "data"
-
-    # --- LLM provider selection ---
-    # Options: "ollama" (local), "groq" (cloud, fast), "openrouter" (cloud, multi-model gateway)
-    llm_provider: str = "ollama"
-    llm_temperature: float = 0.1
+    llm_provider: str
+    llm_temperature: float
 
     # Ollama
-    llm_model: str = "llama3.2:3b"
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_chat_model: str
+    ollama_base_url: str
+    ollama_vision_model: str
 
     # Groq
     groq_api_key: str | None = None
-    groq_model: str = "llama-3.1-8b-instant"
-    groq_vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    groq_chat_model: str
+    groq_vision_model: str
+    groq_ensemble_models: str
+    groq_ensemble_judge_model: str
 
-    # OpenRouter - OpenAI-compatible gateway with access to Claude, GPT-4,
-    # Gemini, Llama, Mistral, and ~100 other models through a single API key.
-    # See https://openrouter.ai/models for the full catalog and per-model pricing.
+    # OpenRouter
     openrouter_api_key: str | None = None
-    openrouter_model: str = "meta-llama/llama-3.3-70b-instruct"
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_chat_model: str
+    openrouter_base_url: str
     openrouter_site_url: str | None = None
-    openrouter_app_name: str | None = "GenAI Agent"
+    openrouter_app_name: str | None = None
+    openrouter_vision_model: str
+    openrouter_ensemble_models: str
+    openrouter_ensemble_judge_model: str
 
     # Embeddings
-    embedding_model: str = "BAAI/bge-m3"
+    embedding_model: str
 
     # Retrieval
-    chunk_size: int = 800
-    chunk_overlap: int = 100
-    top_k: int = 4
+    chunk_size: int
+    chunk_overlap: int
+    top_k: int
 
     # Agent
-    # max_agent_iterations is the soft cap on agent ReAct cycles. The actual
-    # LangGraph recursion limit is (max_agent_iterations * 2 + 4), giving the
-    # graph room for both the agent-step and tool-step nodes per cycle plus a
-    # small buffer for the final synthesis step. Default 8 -> recursion 20,
-    # which comfortably handles compound multi-part user questions without
-    # giving the agent so much rope it spirals on bad tools.
-    max_agent_iterations: int = 8
-    memory_window: int = 10
+    max_agent_iterations: int
+    memory_window: int
 
     # Voice - STT
-    whisper_model: str = "base"
-    whisper_compute_type: str = "int8"
+    whisper_model: str
+    whisper_compute_type: str
     whisper_language: str | None = None
     enable_voice: bool = True
 
     # Voice - TTS
-    tts_backend: str = "piper"
-    piper_voice: str = "en_US-lessac-medium"
-    edge_tts_voice: str = "en-US-AriaNeural"
+    tts_backend: str
+    piper_voice: str
+    edge_tts_voice: str
 
     # API
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
-    cors_origins: list[str] = [
-        "http://localhost:3000",
-        "http://localhost:8501",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:8501",
-    ]
+    api_host: str
+    api_port: int
+    cors_origins: list[str]
 
     # Observability
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
-    langfuse_host: str = "http://localhost:3000"
+    langfuse_host: str
 
     # Tools
-    enable_web_search: bool = True
-    enable_calculator: bool = True
-    enable_python_repl: bool = True
-    web_search_max_results: int = 4
+    enable_web_search: bool
+    enable_calculator: bool
+    web_search_max_results: int
 
-    # --- OAuth providers ---
-    google_oauth_client_id: str = ""
-    google_oauth_client_secret: str = ""
-    github_oauth_client_id: str = ""
-    github_oauth_client_secret: str = ""
+    # OAuth
+    google_oauth_client_id: str
+    google_oauth_client_secret: str
+    github_oauth_client_id: str
+    github_oauth_client_secret: str
 
-    # --- Frontend + backend URLs for OAuth redirect flow ---
-    # frontend_url: where we send the browser AFTER successful OAuth login
-    # backend_url: the OAuth callback target Google/GitHub redirect back to
-    frontend_url: str = "http://localhost:3000"
-    backend_url: str = "http://localhost:8000"
+    # URLs
+    frontend_url: str
+    backend_url: str
 
-    # --- Multi-LLM ensemble ---
-    # Two model lists - one for each provider that supports ensemble mode.
-    # The active list is selected automatically based on LLM_PROVIDER.
-    # OpenRouter's free-tier catalog shifts; verify model availability at
-    # https://openrouter.ai/models?q=free before counting on a specific name.
-    ensemble_models: str = (
-        "llama-3.1-8b-instant,llama-3.3-70b-versatile,openai/gpt-oss-20b"
-    )
-    ensemble_judge_model: str = "openai/gpt-oss-120b"
+    # Ensemble
+    ensemble_max_tokens: int
+    ensemble_timeout_sec: int
 
-    ensemble_models_openrouter: str = (
-        "qwen/qwen3-next-80b-a3b-instruct:free,"
-        "openai/gpt-oss-20b:free,"
-        "google/gemma-4-31b-it:free"
-    )
-    ensemble_judge_model_openrouter: str = "meta-llama/llama-3.3-70b-instruct:free"
+    # Database
+    database_url: str
 
-    ensemble_max_tokens: int = 2000
-    ensemble_timeout_sec: int = 30
+    # Auth
+    jwt_secret: str
+    jwt_lifetime_seconds: int
 
-    # --- Database (Postgres for multi-tenant user data) ---
-    database_url: str = "postgresql+asyncpg://genai:devpassword@localhost:5432/genai"
+    # SMTP
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_password: str
+    smtp_from: str
+    smtp_from_name: str
 
-    # --- Auth (fastapi-users JWT) ---
-    jwt_secret: str = "CHANGE_ME_IN_ENV"
-    jwt_lifetime_seconds: int = 604800  # 7 days
+    # Weaviate
+    weaviate_url: str
+    weaviate_grpc_port: int
+    weaviate_index_name: str
 
-    # --- SMTP (email sending: password reset, verification) ---
-    smtp_host: str = "smtp.gmail.com"
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
-    smtp_from_name: str = "CloudNest.ai"
-
-    weaviate_url: str = "http://localhost:8080"
-    weaviate_grpc_port: int = 50051
-    weaviate_index_name: str = "CloudNestDocs"
-
+    # Derived paths
     @property
     def docs_dir(self) -> Path:
         return self.data_dir / "docs"
 
     @property
-    def chroma_dir(self) -> Path:
-        return self.data_dir / "chroma"
-
-    @property
     def audio_dir(self) -> Path:
         return self.data_dir / "audio"
 
+    # Provider helper
+    @property
+    def provider(self) -> str:
+        return self.llm_provider.lower()
+
+    # Ensemble logic
     @property
     def ensemble_models_list(self) -> list[str]:
-        """Candidate models for the currently-active provider's ensemble.
-
-        Returns the Groq list when LLM_PROVIDER=groq, the OpenRouter list
-        when LLM_PROVIDER=openrouter. Other providers don't support ensemble.
-        """
-        provider = self.llm_provider.lower()
-        if provider == "openrouter":
-            raw = self.ensemble_models_openrouter
+        if self.provider == "openrouter":
+            raw = self.openrouter_ensemble_models
+        elif self.provider == "groq":
+            raw = self.groq_ensemble_models
         else:
-            raw = self.ensemble_models
+            return []
+
         return [m.strip() for m in raw.split(",") if m.strip()]
 
     @property
     def active_judge_model(self) -> str:
-        """Judge model for the currently-active provider's ensemble."""
-        provider = self.llm_provider.lower()
-        if provider == "openrouter":
-            return self.ensemble_judge_model_openrouter
-        return self.ensemble_judge_model
+        if self.provider == "openrouter":
+            return self.openrouter_ensemble_judge_model
+        return self.groq_ensemble_judge_model
 
+    @property
+    def active_chat_model(self) -> str:
+        if self.provider == "groq":
+            return self.groq_chat_model
+        if self.provider == "openrouter":
+            return self.openrouter_chat_model
+        return self.ollama_chat_model
+
+    @property
+    def active_vision_model(self) -> str:
+        if self.provider == "groq":
+            return self.groq_vision_model
+        if self.provider == "openrouter":
+            return self.openrouter_vision_model
+        return self.ollama_vision_model
+
+    # Voice language mapping
     @property
     def edge_tts_voice_by_lang(self) -> dict[str, str]:
         return {
@@ -212,7 +203,7 @@ class Settings(BaseSettings):
             "sw": "sw-TZ-RehemaNeural",
         }
 
-
+# INIT
 settings = Settings()
-for d in (settings.docs_dir, settings.chroma_dir, settings.audio_dir):
+for d in (settings.docs_dir, settings.audio_dir):
     d.mkdir(parents=True, exist_ok=True)

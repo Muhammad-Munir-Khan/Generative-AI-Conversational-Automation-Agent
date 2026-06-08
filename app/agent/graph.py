@@ -12,7 +12,19 @@ Observability: each agent run attaches a Langfuse callback handler (when
 configured) so the full trace - LLM calls, tool calls, latency, tokens,
 cost - is captured. If Langfuse isn't configured the handler is None and
 the run proceeds normally with no tracing.
+
+Tool-call deduplication: weaker models (notably small local Ollama models)
+tend to re-issue the SAME tool call repeatedly within one turn - e.g. calling
+document_search three times for one question - because they don't recognize
+they already have the result. Each repeat is a full (slow) LLM round trip, so
+on CPU this turns a 4s answer into a 20-minute spiral. DedupToolNode below
+short-circuits repeats: an identical (name, args) call returns the cached
+result, and a second call to any single-shot retrieval tool is blocked with a
+nudge to answer from what's already been gathered. This is provider-agnostic
+defensive logic - capable models rarely trigger it, weak models are saved by
+it.
 """
+import json
 import threading
 import time
 import uuid
@@ -43,6 +55,16 @@ from app.tools.registry import get_tools
 
 log = get_logger(__name__)
 
+# Retrieval / search tools that should run AT MOST ONCE per user turn. A second
+# attempt at any of these (even with reworded args) is short-circuited, because
+# re-searching rarely helps and on slow models it drives the iteration spiral.
+SINGLE_SHOT_TOOLS = {
+    "document_search",
+    "knowledge_base_search",
+    "document_summarizer",
+    "web_search",
+}
+
 SYSTEM_PROMPT = """You are a helpful conversational assistant with access to tools.
 
 Available capabilities:
@@ -57,34 +79,53 @@ Available capabilities:
 - currency_converter: Convert money between currencies (live ECB rates).
 - weather: Current weather and 3-day forecast for any location.
 
+HANDLING ATTACHED FILES (CRITICAL - read this first):
+- When the user's message contains an attachment block (text between
+  "--- BEGIN ATTACHMENT ---" and "--- END ATTACHMENT ---"), that text IS the
+  full content of the file they just uploaded. READ IT DIRECTLY and answer the
+  user's question from it.
+- DO NOT call document_search or document_summarizer for a file shown inline as
+  an attachment. Those tools search PREVIOUSLY INDEXED documents and will NOT
+  find a freshly attached file - they return nothing and waste a slow round trip.
+- The filename in the attachment header (e.g. an image or .webp/.png name) is
+  NOT something to look up - the content is already provided below it. Just use it.
+- Only use document_search / document_summarizer when the user refers to a
+  document that is NOT included inline (e.g. "the report I uploaded last week").
+
+PICK THE RIGHT TOOL FIRST (this matters - a wrong first choice wastes a slow round trip):
+- Weather / temperature / forecast for a place -> weather. NEVER use document_search or knowledge_base_search for weather.
+- Math, percentages, arithmetic -> calculator.
+- Date/time, unit conversion, currency -> the matching dedicated tool.
+- Current events / general web facts -> web_search.
+- A fact from the user's OWN uploaded file ('my document', 'the PDF I uploaded') -> document_search.
+- Admin-curated reference material (policies, manuals, FAQs) -> knowledge_base_search.
+- General chit-chat or greetings ('hi', 'how are you') -> just reply, DO NOT call any tool.
+
 Choosing between document_search and knowledge_base_search:
-- The user's OWN files / 'my document' / 'the PDF I uploaded' -> document_search.
-- Reference material the admin curated (policies, manuals, FAQs,
-  shared documentation) -> knowledge_base_search.
+- The user's OWN files -> document_search.
+- Reference material the admin curated -> knowledge_base_search.
 - When in doubt and the question is reference-y, try knowledge_base_search FIRST.
-- If a retrieval tool returns no useful info, do NOT retry it with reworded
-  queries. Either try the OTHER retrieval tool once, or answer honestly that
-  the information is not available.
 
 Tool usage rules (IMPORTANT - prevents wasted iterations):
 - Call each retrieval tool (document_search, knowledge_base_search,
   document_summarizer, web_search) AT MOST ONCE per user turn.
-- If the user asks a compound multi-part question, formulate ONE clear,
-  comprehensive search query that covers the topic broadly - do NOT issue
-  one search per sub-question.
-- After your tool calls, synthesize a final answer. Do not call more tools
-  hoping for better results.
+- Do NOT call the same tool again with reworded arguments. One attempt is all
+  you get per tool.
+- After a tool returns - EVEN IF IT RETURNS NOTHING USEFUL OR EMPTY - do not
+  call it again. Either try ONE different tool that fits better, or answer the
+  user directly from what you already know.
+- If a search found nothing, say so honestly and answer from general knowledge.
+  Do not keep searching.
+- For a compound multi-part question, formulate ONE comprehensive query - do
+  NOT issue one search per sub-question.
 
 Guidelines:
-- For specific facts from indexed docs, prefer the matching RAG tool FIRST.
-- For an overview of a personal document, use document_summarizer (NOT document_search).
 - For ANY arithmetic - even simple multiplication or percentages - use calculator FIRST, then pass the numeric result to other tools.
 - NEVER put math expressions inside other tools' numeric arguments.
   WRONG: currency_converter(amount="0.15 * 240000", from_currency="USD", to_currency="EUR")
   RIGHT: calculator(expression="0.15 * 240000") -> returns 36000
          currency_converter(amount=36000, from_currency="USD", to_currency="EUR")
-- For web/current info not in docs, use web_search.
-- For dates, units, currency, weather - use the matching dedicated tool.
+- For an overview of a personal document, use document_summarizer (NOT document_search).
 - After tools, synthesize a clear, concise answer.
 - If a tool returns no useful info, say so honestly. Don't make things up.
 - Preserve any source citations from document_search / knowledge_base_search in your final answer.
@@ -96,9 +137,110 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 
+def _dedup_key(name: str, args: dict) -> str:
+    """Stable identity for a tool call: name + canonicalized args."""
+    try:
+        norm = json.dumps(args or {}, sort_keys=True, default=str)
+    except Exception:
+        norm = str(args)
+    return f"{name}::{norm}"
+
+
+class DedupToolNode:
+    """Wraps ToolNode to suppress repeated tool calls within a single turn.
+
+    Two suppression rules, checked per emitted tool call:
+      1. Exact repeat - same (name, args) already executed this turn -> return
+         the previously produced ToolMessage content (cached), no re-execution.
+      2. Single-shot breach - the tool is in SINGLE_SHOT_TOOLS and was already
+         run once this turn (even with different args) -> return a short
+         ToolMessage telling the model to answer from what it has.
+
+    Calls that pass both checks are delegated to the real ToolNode and their
+    results cached. State (_executed / _cache / _ran_tools) lives on the
+    compiled-graph-run scope via instance attributes reset at the start of each
+    top-level run by reset_run_state().
+    """
+
+    def __init__(self, tools):
+        self._inner = ToolNode(tools)
+        self._executed: dict[str, str] = {}   # dedup_key -> result content
+        self._ran_tools: set[str] = set()      # tool names already run this turn
+
+    def reset_run_state(self):
+        self._executed.clear()
+        self._ran_tools.clear()
+
+    def __call__(self, state: AgentState):
+        last = state["messages"][-1]
+        if not (isinstance(last, AIMessage) and last.tool_calls):
+            return {"messages": []}
+
+        passthrough_calls = []   # tool calls we will actually execute
+        synthetic_msgs = []      # ToolMessages we fabricate for suppressed calls
+
+        for tc in last.tool_calls:
+            name = tc["name"]
+            args = tc.get("args", {}) or {}
+            call_id = tc["id"]
+            key = _dedup_key(name, args)
+
+            if key in self._executed:
+                log.info("dedup: exact-repeat %s suppressed (cached)", name)
+                synthetic_msgs.append(
+                    ToolMessage(
+                        content=self._executed[key],
+                        tool_call_id=call_id,
+                        name=name,
+                    )
+                )
+                continue
+
+            if name in SINGLE_SHOT_TOOLS and name in self._ran_tools:
+                log.info("dedup: single-shot %s already ran this turn, blocking repeat", name)
+                synthetic_msgs.append(
+                    ToolMessage(
+                        content=(
+                            f"[{name} was already used this turn and returned its "
+                            f"result above. Do not call it again. Answer the user "
+                            f"from the information already gathered, or use a "
+                            f"different tool that fits better.]"
+                        ),
+                        tool_call_id=call_id,
+                        name=name,
+                    )
+                )
+                continue
+
+            passthrough_calls.append(tc)
+
+        executed_msgs: list[BaseMessage] = []
+        if passthrough_calls:
+            # Hand ToolNode a message containing ONLY the calls we allow.
+            proxy = AIMessage(content="", tool_calls=passthrough_calls)
+            result = self._inner.invoke({"messages": [proxy]})
+            executed_msgs = result["messages"]
+
+            # Cache results + mark tools as run, matching ToolMessages back to
+            # their originating call by tool_call_id.
+            by_id = {tc["id"]: tc for tc in passthrough_calls}
+            for msg in executed_msgs:
+                if isinstance(msg, ToolMessage):
+                    src = by_id.get(msg.tool_call_id)
+                    if src:
+                        k = _dedup_key(src["name"], src.get("args", {}) or {})
+                        self._executed[k] = msg.content or ""
+                        self._ran_tools.add(src["name"])
+
+        # Preserve original call order: synthetic + executed together. Order
+        # within doesn't matter to the LLM as long as every tool_call_id is
+        # answered, which it is.
+        return {"messages": synthetic_msgs + executed_msgs}
+
+
 def _build_graph():
     tools = get_tools()
-    tool_node = ToolNode(tools)
+    dedup_node = DedupToolNode(tools)
     llm = get_llm().bind_tools(tools)
 
     def agent_node(state: AgentState):
@@ -113,11 +255,15 @@ def _build_graph():
 
     graph = StateGraph(AgentState)
     graph.add_node("agent", agent_node)
-    graph.add_node("tools", tool_node)
+    graph.add_node("tools", dedup_node)
     graph.add_edge(START, "agent")
     graph.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
     graph.add_edge("tools", "agent")
-    return graph.compile()
+    compiled = graph.compile()
+    # Expose the dedup node so per-run state can be reset before each top-level
+    # invocation (the same compiled graph is reused across requests).
+    compiled._dedup_node = dedup_node
+    return compiled
 
 
 _graph = None
@@ -128,6 +274,14 @@ def get_graph():
     if _graph is None:
         _graph = _build_graph()
     return _graph
+
+
+def _reset_dedup_state():
+    """Clear per-turn dedup memory before a new top-level agent run."""
+    g = get_graph()
+    node = getattr(g, "_dedup_node", None)
+    if node is not None:
+        node.reset_run_state()
 
 
 def _build_config(user_id: str | uuid.UUID, session_id: str) -> dict:
@@ -149,19 +303,56 @@ def _build_config(user_id: str | uuid.UUID, session_id: str) -> dict:
     }
 
 
+def _assemble_messages(
+    system_prompt_with_directive: str,
+    history: list[BaseMessage],
+    user_content: str,
+    language: str,
+) -> list[BaseMessage]:
+    """Build the message list, reinforcing the language directive AFTER history.
+
+    The base system prompt (already carrying the directive) goes first, then the
+    conversation history, then - for any non-English language OR an explicit
+    switch - a SECOND short SystemMessage repeating the language requirement
+    right before the current user turn. Models obey the most recent instruction
+    most strongly, so this placement is what makes a mid-conversation language
+    switch actually stick even on weak models (Ollama 3B, OpenRouter :free),
+    which otherwise drift back to the language of the recent history.
+    """
+    messages: list[BaseMessage] = [SystemMessage(content=system_prompt_with_directive)]
+    messages.extend(history)
+
+    directive = language_directive(language).strip()
+    if directive:
+        # Repeat the directive as the last system instruction before the user
+        # message, so it outweighs the language of prior turns in history.
+        messages.append(SystemMessage(content=directive))
+
+    messages.append(HumanMessage(content=user_content))
+    return messages
+
+
 def _build_user_content(
     message: str,
     attachment_text: str | None,
     attachment_name: str | None,
 ) -> str:
-    """If an attachment is provided, prepend its content as context."""
+    """If an attachment is provided, prepend its content as context.
+
+    The framing explicitly states the text below IS the file's extracted
+    content, so the model answers from it directly rather than trying to look
+    the file up with document_search / document_summarizer (which search the
+    indexed corpus, not this freshly attached file).
+    """
     if not attachment_text:
         return message
     snippet = attachment_text[:12000]
     truncated_note = "\n[...truncated]" if len(attachment_text) > 12000 else ""
     label = attachment_name or "attached file"
     return (
-        f"[The user attached a file: {label}]\n"
+        f"The user uploaded a file ({label}). Its full extracted content is "
+        f"below. Answer the user's question using THIS content directly - do not "
+        f"call document_search or document_summarizer for it.\n"
         f"--- BEGIN ATTACHMENT ---\n{snippet}{truncated_note}\n--- END ATTACHMENT ---\n\n"
         f"{message}"
     )
@@ -328,15 +519,14 @@ def run_agent(
     """
     token = set_current_user(user_id)
     try:
+        _reset_dedup_state()
         t0 = time.time()
         history = memory.get(session_id, user_id=user_id)
 
         user_content = _build_user_content(message, attachment_text, attachment_name)
         system_prompt = SYSTEM_PROMPT + language_directive(language)
 
-        messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
-        messages.extend(history)
-        messages.append(HumanMessage(content=user_content))
+        messages = _assemble_messages(system_prompt, history, user_content, language)
 
         config = _build_config(user_id, session_id)
         final = get_graph().invoke({"messages": messages}, config=config)
@@ -390,15 +580,14 @@ def stream_agent(
     previous_user = get_current_user()
     set_current_user(user_id)
     try:
+        _reset_dedup_state()
         t0 = time.time()
         history = memory.get(session_id, user_id=user_id)
 
         user_content = _build_user_content(message, attachment_text, attachment_name)
         system_prompt = SYSTEM_PROMPT + language_directive(language)
 
-        messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
-        messages.extend(history)
-        messages.append(HumanMessage(content=user_content))
+        messages = _assemble_messages(system_prompt, history, user_content, language)
 
         config = _build_config(user_id, session_id)
 

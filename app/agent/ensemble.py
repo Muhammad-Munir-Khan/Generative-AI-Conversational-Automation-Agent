@@ -7,6 +7,11 @@ models via the OpenAI SDK pointed at OpenRouter's base URL (both providers
 speak the same Chat Completions protocol, so the per-call code is identical).
 
 This module bypasses the LangGraph agent entirely — no tools, no memory.
+
+Robustness note: free-tier / overloaded providers occasionally return a
+response whose `choices` is None or empty (rather than raising), which used to
+surface as the cryptic "'NoneType' object is not subscriptable". _content_of()
+guards that and yields a clean, informative error instead.
 """
 import asyncio
 import json
@@ -70,6 +75,28 @@ class EnsembleResponse(BaseModel):
     total_latency_ms: int
 
 
+def _content_of(response) -> str:
+    """Safely extract message content from a chat-completions response.
+
+    Free-tier / overloaded providers sometimes return an object whose
+    `choices` is None or empty instead of raising. Accessing
+    response.choices[0] then throws "'NoneType' object is not subscriptable",
+    which is opaque. This guards each step and raises a clear RuntimeError that
+    the callers turn into a readable candidate/judge error.
+    """
+    choices = getattr(response, "choices", None)
+    if not choices:
+        # Surface any provider-supplied error detail if present.
+        err = getattr(response, "error", None)
+        detail = f" (provider error: {err})" if err else ""
+        raise RuntimeError(f"model returned no choices{detail}")
+    first = choices[0]
+    message = getattr(first, "message", None)
+    if message is None:
+        raise RuntimeError("model returned a choice with no message")
+    return message.content or ""
+
+
 # ---------------------------------------------------------------------------
 # Per-call helpers (identical across providers — both speak the OpenAI proto)
 # ---------------------------------------------------------------------------
@@ -92,7 +119,7 @@ async def _ask_one(
             ),
             timeout=settings.ensemble_timeout_sec,
         )
-        answer = response.choices[0].message.content or ""
+        answer = _content_of(response)
         return CandidateResponse(
             model=model,
             answer=answer.strip(),
@@ -154,19 +181,33 @@ async def _judge(
             ),
             timeout=settings.ensemble_timeout_sec,
         )
-        raw = response.choices[0].message.content or "{}"
-        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        return json.loads(raw)
-    except (asyncio.TimeoutError, json.JSONDecodeError, Exception) as e:
+        raw = _content_of(response) or "{}"
+        # Strip any stray markdown fences, then pull out the JSON object. Using a
+        # regex to locate the outermost {...} is more robust than lstrip tricks
+        # (which could mangle content) when a model wraps JSON in prose/fences.
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            raise ValueError("no JSON object found in judge response")
+        return json.loads(match.group(0))
+    except asyncio.TimeoutError as e:
+        log.warning("judge failed: timeout after %ss", settings.ensemble_timeout_sec)
+        return _judge_fallback(valid)
+    except Exception as e:
         log.warning("judge failed: %s", e)
-        best = max(valid, key=lambda c: len(c.answer))
-        return {
-            "ranking": [
-                {"model": c.model, "rank": i + 1, "reason": "judge unavailable"}
-                for i, c in enumerate(valid)
-            ],
-            "verdict": best.answer,
-        }
+        return _judge_fallback(valid)
+
+
+def _judge_fallback(valid: list[CandidateResponse]) -> dict:
+    """When the judge can't run, pick the longest valid answer and mark the
+    ranking as judge-unavailable so the UI can show candidates honestly."""
+    best = max(valid, key=lambda c: len(c.answer))
+    return {
+        "ranking": [
+            {"model": c.model, "rank": i + 1, "reason": "judge unavailable"}
+            for i, c in enumerate(valid)
+        ],
+        "verdict": best.answer,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -232,8 +273,8 @@ async def run_ensemble_async(question: str, language: str = "en") -> EnsembleRes
     """Fire candidates in parallel, then run the judge on the results.
 
     Models and judge are selected from settings based on the active provider:
-      - LLM_PROVIDER=groq        → ENSEMBLE_MODELS + ENSEMBLE_JUDGE_MODEL
-      - LLM_PROVIDER=openrouter  → ENSEMBLE_MODELS_OPENROUTER + ENSEMBLE_JUDGE_MODEL_OPENROUTER
+      - LLM_PROVIDER=groq        → GROQ_ENSEMBLE_MODELS + GROQ_ENSEMBLE_JUDGE_MODEL
+      - LLM_PROVIDER=openrouter  → OPENROUTER_ENSEMBLE_MODELS + OPENROUTER_ENSEMBLE_JUDGE_MODEL
     """
     client, provider = _build_client_for_active_provider()
 
@@ -243,8 +284,7 @@ async def run_ensemble_async(question: str, language: str = "en") -> EnsembleRes
     if not candidate_models:
         raise RuntimeError(
             f"Ensemble model list for provider {provider!r} is empty. "
-            f"Set the appropriate env var in .env "
-            f"(ENSEMBLE_MODELS for groq, ENSEMBLE_MODELS_OPENROUTER for openrouter)."
+            f"Set the appropriate env var in .env."
         )
     if len(candidate_models) < 2:
         raise RuntimeError(

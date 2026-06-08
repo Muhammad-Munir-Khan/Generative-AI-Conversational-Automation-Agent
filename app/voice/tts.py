@@ -2,9 +2,17 @@
 
 Backend chosen by settings.tts_backend: "piper" or "edge".
 Edge backend supports per-language neural voices via settings.edge_tts_voice_by_lang.
+
+Text is sanitized before synthesis: markdown is stripped, symbols are spoken
+out (≈ -> "approximately", ° -> "degrees", % -> "percent"), and CJK/full-width
+punctuation is normalized to ASCII. Edge TTS in particular returns
+NoAudioReceived when handed markup or certain punctuation, so cleaning is
+required, not cosmetic. A single retry guards against transient Edge failures.
 """
 import asyncio
 import io
+import re
+import unicodedata
 import urllib.request
 import wave
 from functools import lru_cache
@@ -14,6 +22,114 @@ from app.core.config import settings
 from app.core.logging import get_logger
 
 log = get_logger(__name__)
+
+
+# =============================================================================
+# Text sanitization (shared by both backends)
+# =============================================================================
+
+# Symbols / punctuation normalized to spoken or safe equivalents.
+_TTS_REPLACEMENTS = {
+    # Math / units / general symbols
+    "≈": " approximately ",
+    "~": " approximately ",
+    "°": " degrees ",
+    "℃": " degrees ",      # single-char degree-Celsius (common in CJK text)
+    "℉": " degrees ",
+    "%": " percent ",
+    "‰": " per mille ",
+    "&": " and ",
+    "@": " at ",
+    "#": " ",
+    "*": " ",
+    "_": " ",
+    "`": " ",
+    "|": " ",
+    "<": " ",
+    ">": " ",
+    "^": " ",
+    "=": " equals ",
+    "+": " plus ",
+    "—": ", ",            # em dash
+    "–": ", ",            # en dash
+    "•": " ",
+    "·": " ",
+    "・": " ",
+    # CJK / full-width punctuation -> ASCII + space
+    "，": ", ",
+    "。": ". ",
+    "、": ", ",
+    "：": ": ",
+    "；": "; ",
+    "！": "! ",
+    "？": "? ",
+    "（": " ",
+    "）": " ",
+    "【": " ",
+    "】": " ",
+    "《": " ",
+    "》": " ",
+    "「": " ",
+    "」": " ",
+    "『": " ",
+    "』": " ",
+    "～": " to ",          # full-width tilde (ranges, e.g. 21.6～33.0)
+    "〜": " to ",          # wave dash
+    "．": ". ",            # full-width period
+    "　": " ",            # ideographic (full-width) space
+}
+
+
+def _clean_text_for_tts(text: str) -> str:
+    """Make arbitrary assistant text safe and natural for TTS synthesis.
+
+    Steps: strip markdown structure, drop code, normalize symbols and
+    CJK/full-width punctuation, remove leftover control/format characters,
+    then collapse whitespace. Returns "" if nothing speakable remains.
+    """
+    if not text:
+        return ""
+
+    t = text
+
+    # 1. Remove fenced code blocks and inline code entirely (unspeakable).
+    t = re.sub(r"```[\s\S]*?```", " ", t)
+    t = re.sub(r"~~~[\s\S]*?~~~", " ", t)
+
+    # 2. Markdown links [label](url) -> label ; images ![alt](url) -> alt
+    t = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", t)
+
+    # 3. Markdown table pipes and leading list markers.
+    t = re.sub(r"(?m)^\s*[-*+•]\s+", " ", t)
+    t = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", " ", t)   # ATX headings
+    t = re.sub(r"(?m)^\s*>\s?", " ", t)            # blockquotes
+
+    # 4. Symbol / punctuation normalization.
+    for sym, word in _TTS_REPLACEMENTS.items():
+        t = t.replace(sym, word)
+
+    # 5. Drop any remaining Unicode control/format characters (category C*),
+    #    which Edge can choke on, while keeping normal letters, marks, numbers,
+    #    punctuation, symbols and separators.
+    cleaned_chars = []
+    for ch in t:
+        if ch in "\n\r\t":
+            cleaned_chars.append(" ")
+            continue
+        cat = unicodedata.category(ch)
+        if cat.startswith("C"):   # Cc, Cf, Cs, Co, Cn -> control/format/etc.
+            continue
+        cleaned_chars.append(ch)
+    t = "".join(cleaned_chars)
+
+    # 6. Collapse whitespace.
+    t = re.sub(r"\s+", " ", t).strip()
+
+    # 7. Guard: if only punctuation/symbols survive, treat as empty.
+    if not re.search(r"[^\W_]", t, flags=re.UNICODE):
+        return ""
+
+    return t
 
 
 # =============================================================================
@@ -31,24 +147,12 @@ def _resolve_edge_voice(language: str) -> str:
     return settings.edge_tts_voice
 
 
-def _synthesize_edge(text: str, language: str = "en") -> bytes:
-    """Use Microsoft Edge's neural voices via edge-tts.
-
-    NOTE: edge-tts uses an undocumented Microsoft API. Free, no key, but
-    Microsoft could change or revoke access at any time. Returns MP3 bytes.
-    """
-    try:
-        import edge_tts
-    except ImportError as e:
-        raise RuntimeError(
-            "edge-tts is not installed. Run: pip install edge-tts"
-        ) from e
-
-    voice = _resolve_edge_voice(language)
-    log.debug("Edge TTS synthesizing in %s with voice %s", language, voice)
+def _edge_stream_once(clean_text: str, voice: str) -> bytes:
+    """Single synthesis attempt. Returns MP3 bytes (may be empty)."""
+    import edge_tts
 
     async def _run() -> bytes:
-        communicate = edge_tts.Communicate(text, voice=voice)
+        communicate = edge_tts.Communicate(clean_text, voice=voice)
         buf = io.BytesIO()
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
@@ -56,6 +160,50 @@ def _synthesize_edge(text: str, language: str = "en") -> bytes:
         return buf.getvalue()
 
     return asyncio.run(_run())
+
+
+def _synthesize_edge(text: str, language: str = "en") -> bytes:
+    """Use Microsoft Edge's neural voices via edge-tts.
+
+    NOTE: edge-tts uses an undocumented Microsoft API. Free, no key, but
+    Microsoft could change or revoke access at any time. Returns MP3 bytes.
+    """
+    try:
+        import edge_tts  # noqa: F401  (import-checked here for a clear error)
+    except ImportError as e:
+        raise RuntimeError(
+            "edge-tts is not installed. Run: pip install edge-tts"
+        ) from e
+
+    voice = _resolve_edge_voice(language)
+    clean = _clean_text_for_tts(text)
+    if not clean:
+        raise RuntimeError("No speakable text after cleaning for TTS.")
+
+    log.debug(
+        "Edge TTS synthesizing language=%s voice=%s clean_len=%d",
+        language, voice, len(clean),
+    )
+
+    # One retry: Edge occasionally returns NoAudioReceived transiently even
+    # for valid input.
+    last_err: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            audio = _edge_stream_once(clean, voice)
+        except Exception as e:  # includes edge_tts.exceptions.NoAudioReceived
+            last_err = e
+            log.warning("Edge TTS attempt %d failed: %s", attempt, e)
+            continue
+        if audio:
+            return audio
+        last_err = RuntimeError("Edge returned empty audio")
+        log.warning("Edge TTS attempt %d produced no audio", attempt)
+
+    raise RuntimeError(
+        f"Edge TTS produced no audio (voice={voice}, language={language}). "
+        f"Last error: {last_err}"
+    )
 
 
 # =============================================================================
@@ -96,15 +244,18 @@ def _get_piper_voice():
 
 def _synthesize_piper(text: str) -> bytes:
     voice = _get_piper_voice()
+    clean = _clean_text_for_tts(text)
+    if not clean:
+        raise RuntimeError("No speakable text after cleaning for TTS.")
     buf = io.BytesIO()
 
     if hasattr(voice, "synthesize_wav"):
         with wave.open(buf, "wb") as wav:
-            voice.synthesize_wav(text, wav)
+            voice.synthesize_wav(clean, wav)
         return buf.getvalue()
 
     if hasattr(voice, "synthesize"):
-        chunks = list(voice.synthesize(text))
+        chunks = list(voice.synthesize(clean))
         if not chunks:
             raise RuntimeError("Piper produced no audio chunks")
         first = chunks[0]

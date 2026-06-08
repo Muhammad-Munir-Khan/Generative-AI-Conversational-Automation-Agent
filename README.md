@@ -2,11 +2,11 @@
 
 > Your own AI workspace. Your data. Your rules.
 
-A self-hostable, multi-tenant conversational AI platform built end-to-end. Combines per-user retrieval-augmented generation, a shared admin-curated knowledge base, a 10-tool agent loop, multi-LLM consensus mode, voice in/out, vision, true multilingual retrieval across 100+ languages, a real admin panel, and a streaming Next.js frontend. Switches between Groq, OpenRouter, and Ollama through one config line. Deploys with one Docker command.
+A self-hostable, multi-tenant conversational AI platform built end-to-end. Combines per-user retrieval-augmented generation, a shared admin-curated knowledge base, a 10-tool agent loop, multi-LLM consensus mode, voice in/out, vision, true multilingual retrieval across 100+ languages, strict per-turn response-language control, a real admin panel, and a streaming Next.js frontend. Switches between Groq, OpenRouter, and Ollama through one config line. Deploys with one Docker command.
 
 > **Stack:** FastAPI · LangGraph · LangChain · PostgreSQL · Weaviate · BGE-M3 embeddings · faster-whisper · Edge TTS · Next.js 15 · Tailwind · fastapi-users · Langfuse · Docker
 >
-> **Three swappable LLM providers.** Groq for raw speed, OpenRouter for access to ~100 commercial models (Claude, GPT-4, Gemini), or Ollama for fully local inference. One `.env` line picks the active backend.
+> **Three swappable LLM providers.** Groq for raw speed, OpenRouter for access to ~100 commercial models (Claude, GPT-4, Gemini), or Ollama for fully local inference. One `.env` line picks the active backend — and the same line also routes the vision and ensemble paths. See the [provider support matrix](#provider-support) for tested behavior on each.
 
 ---
 
@@ -17,17 +17,35 @@ A self-hostable, multi-tenant conversational AI platform built end-to-end. Combi
 - **Real admin panel.** Three-tier role system (user / corpus_admin / super_admin). Manage users, suspend accounts (with optional reason emailed to the user), reset passwords, force-logout active sessions instantly. Curate the shared knowledge base with file uploads and hybrid-search preview. Live system stats.
 - **10-tool agent loop.** A LangGraph ReAct agent decides per turn whether to search the user's documents, search the shared knowledge base, search the web, do math, parse JSON, work with dates, convert units or currency, fetch weather, or just answer.
 - **Multilingual retrieval (100+ languages).** Powered by `BAAI/bge-m3`, a state-of-the-art multilingual embedding model. Upload a manual in English, query it in Urdu — cross-lingual retrieval works because the embeddings share semantic space across languages.
-- **Multi-LLM consensus mode.** Toggle on to fan a single query out to **3 different models in parallel**. A 4th model judges the responses, ranks them with reasoning, and synthesizes a final verdict. Works on either Groq or OpenRouter — picks the active provider automatically.
+- **Strict response-language control (37 languages).** A language selector sets the response language independently of retrieval. Switch from English to Japanese mid-conversation and every subsequent answer — chat, RAG, and the ensemble verdict — responds in the selected language, overriding the language of earlier turns. This is distinct from the cross-lingual *retrieval* above: one controls what language the model *answers in*, the other lets it *find* relevant chunks regardless of language.
+- **Multi-LLM consensus mode.** Toggle on to fan a single query out to **3 different models in parallel**. A 4th model judges the responses, ranks them with reasoning, and synthesizes a final verdict. Works on either Groq or OpenRouter — picks the active provider automatically, and honors the selected response language in both candidates and verdict.
 - **Streaming with live agent trace.** SSE-based token streaming. Tool calls appear in a vertical timeline as they execute (`knowledge_base_search` → `calculator` → `currency_converter`), each transitioning from `running` to `done` in real time.
 - **Production-grade authentication & isolation.** JWT + httpOnly cookies (XSS-resistant). Bearer token also supported for CLI/API. OAuth via Google and GitHub. Postgres-backed user accounts. Per-user sessions, messages, documents, and Weaviate tenants. Two users on the same backend never see each other's data — enforced at the database, vector store, API, and agent-context layers.
 - **Global force-logout.** When an admin force-logs out a user, every active session dies on the next request — not just admin pages. Implemented via JWT iat-cutoff checks on every authenticated endpoint.
 - **Account suspension with email notifications.** Block flow auto-force-logs-out the user, sends a templated "account suspended" email with optional admin-provided reason. Unblock fires a restoration email. Suspended users attempting to log in with the correct password see a clear "account suspended" message (wrong-password attempts still get a generic error — no enumeration leak).
-- **Voice in / voice out.** faster-whisper for STT, Microsoft Edge neural voices for TTS. One-tap mic button. Matched native voices for 37 languages.
-- **Vision for images and scanned PDFs.** When text extraction falls short, the vision model (Llama-4 Scout 17B via Groq) reads images directly. No manual workflow.
+- **Voice in / voice out.** faster-whisper for STT, Microsoft Edge neural voices for TTS. One-tap mic button. Matched native voices for 37 languages, with text normalization (markdown stripping, CJK/full-width punctuation handling) so non-Latin scripts synthesize cleanly.
+- **Vision for images and scanned PDFs.** When text extraction falls short, a vision model reads the image directly — provider-aware: Llama-4 Scout 17B on Groq, Llama-3.2-11B-Vision on OpenRouter, or a local `llama3.2-vision` on Ollama. The vision model follows the active provider automatically; webp/gif inputs are normalized to PNG so every provider accepts them. No manual workflow.
 - **Built-in observability.** Langfuse hooks wired into the agent loop. Every run captures tool calls, latencies, token usage, costs. Filter by user, replay tool trees for any failed answer.
-- **Provider abstraction.** Groq, OpenRouter, or Ollama. Switch with `LLM_PROVIDER=...` in `.env`. Same agent loop, same tools, same UX. The platform is built against a provider interface, not vendor lock-in.
+- **Provider abstraction.** Groq, OpenRouter, or Ollama. Switch with `LLM_PROVIDER=...` in `.env`. Same agent loop, same tools, same UX — and the same switch repoints the vision and ensemble paths. The platform is built against a provider interface, not vendor lock-in.
 - **Docker-native.** Single `docker-compose up` brings the full stack online: API, Postgres, Weaviate, Ollama, frontend. Production-quality entrypoints with migrations, healthchecks, and embedded volumes.
 - **Light/dark theme.** Branded cyan/teal gradient. CSS-variable architecture, no flash on page load. Theme toggle in both the landing page and the chat sidebar, synced through one hook.
+
+---
+
+## Provider support
+
+One `.env` line (`LLM_PROVIDER`) routes the entire app — agent, RAG, ensemble, and vision — through the chosen backend. The same code paths run on all three; what differs is raw speed and, on free tiers, throughput. The table below reflects **tested** behavior, not aspiration:
+
+| Capability | Groq | OpenRouter | Ollama (CPU-only) |
+|---|---|---|---|
+| Chat + agent (tools) | Fast, reliable | Works; slower on free tier (low-priority queue + auto-retries) | Works; slow on CPU |
+| RAG + citations | Fast | Works | Works; slow |
+| Response-language switching | Reliable | Reliable | Works (weaker models drift more) |
+| Multi-LLM ensemble | Full, fast | Works; free-tier candidates/judge may queue or time out | Not recommended (too slow) |
+| Vision OCR | Reliable (Llama-4 Scout) | Works when not throttled; intermittent on free tier | Proven but impractical on CPU |
+| Tool-call loop protection | Rarely needed | Rarely needed | Dedup guard prevents weak-model loops |
+
+**Groq is the recommended demo/primary path** — the entire feature set runs fast. **OpenRouter** unlocks ~100 commercial models and works end to end; on the free tier, ensemble and vision are intermittent because free requests hit a low-priority upstream queue, and a small credit removes that. **Ollama** gives fully local, no-API-key inference; it's solid for chat on modest hardware, but the multi-step agent and vision OCR are slow on CPU-only machines. A tool-call de-duplication guard keeps weak local models from spiraling into repeated identical tool calls.
 
 ---
 
@@ -52,7 +70,8 @@ A self-hostable, multi-tenant conversational AI platform built end-to-end. Combi
             +-----------------+        +----------------+
             |  Voice & vision |        |    Langfuse    |
             |  Whisper + Edge |        |  observability |
-            |  Llama-4 Scout  |        +----------------+
+            |  vision: per-   |        +----------------+
+            |  provider model |
             +-----------------+
 
 +----------------------------------------------------------------+
@@ -72,10 +91,13 @@ A self-hostable, multi-tenant conversational AI platform built end-to-end. Combi
 `question -> retrieve_merged() -> half of top-k from personal corpus + half from KB -> tagged with origin -> LLM answers with citations; UI badges personal vs KB sources distinctly`
 
 **Agent path (multi-turn, streaming):**
-`message + session history + user_id -> LangGraph 'agent' node -> LLM with bound tools -> if tool calls, route to 'tools' node -> loop until plain answer -> persist to Postgres -> emit SSE events as it runs`
+`message + session history + user_id -> LangGraph 'agent' node -> LLM with bound tools -> if tool calls, route to 'tools' node (with dedup guard) -> loop until plain answer -> persist to Postgres -> emit SSE events as it runs`
 
 **Multi-LLM ensemble path:**
-`question -> asyncio.gather across N models on active provider -> judge model receives all candidates -> ranks them with JSON output -> synthesizes final verdict`
+`question -> asyncio.gather across N models on active provider -> judge model receives all candidates -> ranks them with JSON output -> synthesizes final verdict (in the selected response language)`
+
+**Vision OCR path:**
+`image/scanned PDF -> normalize to PNG -> route to active provider's vision model (active_vision_model) -> extracted text returned to the agent inline; the agent answers from that text directly rather than re-searching the corpus`
 
 The agent is given retrieval as **two distinct tools** (`document_search` for personal docs, `knowledge_base_search` for the shared KB), not as a prompt prefix. The LLM decides whether documents are relevant for a given turn — much better than blindly retrieving on every message — and which corpus to query.
 
@@ -102,7 +124,9 @@ The agent has 10 tools registered. It picks per turn based on the user's intent:
 | `currency_converter`    | Live ECB exchange rates via Frankfurter API                        |
 | `weather`               | Current + 3-day forecast (Open-Meteo)                              |
 
-Tool selection turned out to be a system-prompt problem more than a model problem — most "wrong tool" issues went away after rewriting tool descriptions to emphasize *when* to use each one. A separate class of bug — recursion loops on compound multi-part questions — was traced via Langfuse to semantic overlap between `document_search` and `knowledge_base_search`; the fix was making the two tools genuinely scope-distinct and adding explicit "call each retrieval tool at most once per turn" guidance to the system prompt.
+Tool selection turned out to be a system-prompt problem more than a model problem — most "wrong tool" issues went away after rewriting tool descriptions to emphasize *when* to use each one. A separate class of bug — recursion loops on compound multi-part questions — was traced via Langfuse to semantic overlap between `document_search` and `knowledge_base_search`; the fix was making the two tools genuinely scope-distinct and adding explicit "call each retrieval tool at most once per turn" guidance to the system prompt, backed by a runtime de-duplication guard in the tools node (identical repeat calls return the cached result; a second single-shot retrieval call is blocked with a nudge to answer from what's already gathered). The guard matters most on weak local models, which otherwise loop.
+
+A related fix on the attachment path: when a file is dropped into the composer, its extracted text is injected inline into the turn. The agent used to call `document_summarizer` on the *filename* (searching the index, which doesn't contain the freshly attached file) instead of reading the text in front of it. Tightening both the system prompt and the inline framing — "this text IS the file's content, answer from it directly, do not call document tools for it" — fixed it.
 
 > **Note on `python_repl` and `csv_reader`:** Both are in the repo but currently unregistered. Small open-source models (gpt-oss-20B, Llama 3.1 8B) hallucinate filenames and forget to `print()` results, making chained CSV-analysis flows unreliable. Phase 5 will re-enable them with a persistent Jupyter-style kernel and a larger tool-calling model. See the roadmap.
 
@@ -140,7 +164,7 @@ A real user-management surface, not a settings page. Surfaced at `/admin` for us
 ```
 cloudnest/
 ├── app/                         # FastAPI backend
-│   ├── core/                    # config · logging · LLM provider · auth · email · DB · roles · admin_deps
+│   ├── core/                    # config · logging · LLM provider · auth · email · DB · roles · admin_deps · language
 │   ├── rag/
 │   │   ├── ingestion.py         # per-user document indexing
 │   │   ├── retrieval.py         # contextvar-scoped retrieval + retrieve_merged (personal + KB)
@@ -148,10 +172,10 @@ cloudnest/
 │   │   ├── collections.py       # Weaviate client + per-user tenant management
 │   │   ├── global_collection.py # GlobalKnowledgeBase (shared corpus) operations
 │   │   ├── embeddings.py        # BGE-M3 singleton (lru_cache)
-│   │   ├── extraction.py        # PDF/image text extraction + vision fallback
+│   │   ├── extraction.py        # PDF/image text extraction + provider-aware vision OCR
 │   │   └── user_context.py      # contextvar holding the active user UUID
 │   ├── agent/
-│   │   ├── graph.py             # LangGraph ReAct loop (run + stream + KB source extraction)
+│   │   ├── graph.py             # LangGraph ReAct loop (run + stream + dedup tool node + KB source extraction)
 │   │   ├── ensemble.py          # Multi-LLM parallel execution + judge
 │   │   ├── memory.py            # Session-scoped conversation buffer
 │   │   ├── storage.py           # Postgres-backed sessions & messages
@@ -230,6 +254,8 @@ SMTP_FROM=your_email@gmail.com
 EMBEDDING_MODEL=BAAI/bge-m3
 ```
 
+> All env var names are uppercase (e.g. `GROQ_CHAT_MODEL`, `OPENROUTER_VISION_MODEL`). See the [Configuration](#configuration) table and `.env.example` for the full set. `LLM_PROVIDER` must be lowercase (`groq` / `openrouter` / `ollama`).
+
 ### 2. Bring up the stack
 
 ```bash
@@ -302,28 +328,36 @@ Open **http://localhost:3000** (not `127.0.0.1` — cookie auth is scoped to `lo
 1. **Personal RAG with citations:** Upload a document, ask *"What does this document say about X?"* → returns the answer with source file + page + similarity score, with a "personal" badge on the source.
 2. **Knowledge base retrieval:** As an admin, upload a company policy or manual to the KB. As any user, ask about it → answer cites the KB source with a distinct badge.
 3. **Cross-lingual retrieval (BGE-M3):** Upload an English document, ask the question in Urdu or Arabic → retrieval still hits because BGE-M3 embeddings share semantic space across languages.
-4. **Multi-step tool chain:** *"What is 87,500 × 24, then convert to EUR?"* → triggers `calculator` → `currency_converter`.
-5. **Multi-LLM consensus:** Toggle multi-LLM mode, ask a judgment question → 3 models answer in parallel, judge ranks them, synthesized verdict appears.
-6. **Voice round-trip:** Tap the mic, say *"What's the weather in Karachi?"*, hear the answer spoken back in your selected language.
-7. **Admin: account suspension flow:** As super_admin, suspend a user with a reason → user is force-logged-out instantly, receives an email, sees the suspended message on next login attempt with correct password.
-8. **Multi-tenant isolation:** Sign up as a second user — none of your first account's chats, documents, or RAG answers leak across.
+4. **Strict language switching:** Set the language selector to Japanese and say *"hi"* → こんにちは. Switch back to English and say *"hi"* again → the reply switches to English, even though the previous turn was Japanese. Ask the same question across several languages — each answer (and any citation) comes back in the selected language.
+5. **Multi-step tool chain:** *"What is 87,500 × 24, then convert to EUR?"* → triggers `calculator` → `currency_converter`.
+6. **Multi-LLM consensus:** Toggle multi-LLM mode, ask a judgment question → 3 models answer in parallel, judge ranks them, synthesized verdict appears (in your selected language).
+7. **Vision OCR:** Drag in a screenshot or scanned invoice and ask *"what's in this document?"* → the active provider's vision model extracts the text and the agent answers from it directly.
+8. **Voice round-trip:** Tap the mic, say *"What's the weather in Karachi?"*, hear the answer spoken back in your selected language.
+9. **Admin: account suspension flow:** As super_admin, suspend a user with a reason → user is force-logged-out instantly, receives an email, sees the suspended message on next login attempt with correct password.
+10. **Multi-tenant isolation:** Sign up as a second user — none of your first account's chats, documents, or RAG answers leak across.
 
 ---
 
 ## Configuration
 
-Every tunable lives in `.env`. Highlights:
+Every tunable lives in `.env`. Env var names are uppercase; `LLM_PROVIDER` takes a lowercase value. Highlights:
 
 | Variable                            | Default                            | Description                                                |
 |-------------------------------------|------------------------------------|------------------------------------------------------------|
-| `LLM_PROVIDER`                      | `groq`                             | Backend: `groq`, `openrouter`, or `ollama`                 |
-| `GROQ_MODEL`                        | `openai/gpt-oss-20b`               | Main agent model when using Groq                           |
-| `OPENROUTER_MODEL`                  | `meta-llama/llama-3.3-70b-instruct`| Main agent model when using OpenRouter                     |
-| `LLM_MODEL`                         | `llama3.2:3b`                      | Main agent model when using Ollama                         |
+| `LLM_PROVIDER`                      | `groq`                             | Backend: `groq`, `openrouter`, or `ollama` (lowercase)     |
+| `GROQ_CHAT_MODEL`                   | `openai/gpt-oss-20b`               | Main agent model when using Groq                           |
+| `OPENROUTER_CHAT_MODEL`             | `meta-llama/llama-3.3-70b-instruct`| Main agent model when using OpenRouter                     |
+| `OLLAMA_CHAT_MODEL`                 | `llama3.2:3b`                      | Main agent model when using Ollama                         |
+| `GROQ_VISION_MODEL`                 | `meta-llama/llama-4-scout-17b-16e-instruct` | Vision model for OCR when using Groq              |
+| `OPENROUTER_VISION_MODEL`           | `meta-llama/llama-3.2-11b-vision-instruct`  | Vision model for OCR when using OpenRouter        |
+| `OLLAMA_VISION_MODEL`               | `llama3.2-vision`                  | Vision model for OCR when using Ollama (must be pulled)    |
 | `EMBEDDING_MODEL`                   | `BAAI/bge-m3`                      | Embedding model. **Note:** changing this requires wiping existing Weaviate collections (dimension mismatch). |
-| `ENSEMBLE_MODELS`                   | 3 Groq models                      | Comma-separated list for multi-LLM ensemble (Groq path)    |
-| `ENSEMBLE_MODELS_OPENROUTER`        | 3 OpenRouter models                | Comma-separated list for ensemble on OpenRouter            |
-| `ENSEMBLE_JUDGE_MODEL`              | `openai/gpt-oss-120b`              | Judge model on Groq                                        |
+| `GROQ_ENSEMBLE_MODELS`              | 3 Groq models                      | Comma-separated candidate list for ensemble (Groq path)    |
+| `OPENROUTER_ENSEMBLE_MODELS`        | 3 OpenRouter models                | Comma-separated candidate list for ensemble (OpenRouter)   |
+| `GROQ_ENSEMBLE_JUDGE_MODEL`         | `openai/gpt-oss-120b`              | Judge model on Groq                                        |
+| `OPENROUTER_ENSEMBLE_JUDGE_MODEL`   | `openai/gpt-oss-120b:free`         | Judge model on OpenRouter                                  |
+| `ENSEMBLE_MAX_TOKENS`               | `2000`                             | Max tokens per ensemble candidate / judge call             |
+| `ENSEMBLE_TIMEOUT_SEC`              | `30`                               | Per-call timeout for ensemble candidates and judge         |
 | `DATABASE_URL`                      | local Postgres                     | SQLAlchemy async DSN                                       |
 | `JWT_SECRET`                        | dev placeholder                    | **Change for production.** Secret for signing JWTs.        |
 | `JWT_LIFETIME_SECONDS`              | `604800`                           | Token lifetime (default 7 days)                            |
@@ -334,7 +368,7 @@ Every tunable lives in `.env`. Highlights:
 | `CHUNK_SIZE / OVERLAP / TOP_K`      | `800 / 100 / 4`                    | RAG retrieval configuration                                |
 | `WHISPER_MODEL`                     | `base`                             | STT model size: `tiny`, `base`, `small`, `medium`          |
 | `TTS_BACKEND`                       | `edge`                             | Voice engine: `edge` (neural online) or `piper` (offline)  |
-| `MAX_AGENT_ITERATIONS`              | `8`                                | Maximum tool-call loop iterations (recursion limit 20)     |
+| `MAX_AGENT_ITERATIONS`              | `8`                                | Maximum tool-call loop iterations (recursion limit derived from this) |
 | `MEMORY_WINDOW`                     | `10`                               | Past message pairs kept in agent context                   |
 
 See `.env.example` for the full reference with comments.
@@ -419,7 +453,7 @@ Multi-turn conversational agent with 10 tools, streaming, session persistence, a
 | DELETE | `/agent/sessions/{session_id}`                | Delete a session and all its messages                    |
 
 **SSE event shape on `/agent/stream`:**
-The stream emits `data:` lines carrying JSON events of types `token` (partial assistant content), `tool_use` (tool call started, with name + args), `tool_result` (tool call finished with output), `sources` (final source attachments from any RAG tool calls), and `done` (terminal event).
+The stream emits `data:` lines carrying JSON events of types `token` (partial assistant content), `tool_start` (tool call started, with name + args), `tool_end` (tool call finished with output preview), `done` (terminal event carrying the final answer, sources, and tool-call summary), and `error`.
 
 ### Voice (`/voice/*`)
 
@@ -430,15 +464,15 @@ Speech-to-text via faster-whisper, text-to-speech via Edge or Piper.
 | POST   | `/voice/transcribe`             | Audio → text. Multipart upload (WAV/MP3/M4A/OGG); returns transcript + detected language |
 | POST   | `/voice/tts`                    | Text → audio. JSON body with text + language; returns audio bytes in the configured TTS format |
 
-The TTS engine is configurable via `TTS_BACKEND` (`edge` = Microsoft neural voices online, 37 languages; `piper` = local offline voices). Edge auto-picks the matching native voice for the language code.
+The TTS engine is configurable via `TTS_BACKEND` (`edge` = Microsoft neural voices online, 37 languages; `piper` = local offline voices). Edge auto-picks the matching native voice for the language code. Input text is normalized first (markdown removed, CJK/full-width punctuation handled) so non-Latin scripts synthesize without errors.
 
 ### Attachments (`/attachments/*`)
 
-Document and image extraction utility — used by chat composer for "drag & drop a file" before sending it as context.
+Document and image extraction utility — used by the chat composer for "drag & drop a file" before sending it as context.
 
 | Method | Path                            | Purpose                                                  |
 |--------|---------------------------------|----------------------------------------------------------|
-| POST   | `/attachments/extract`          | PDF/image → text. Tries text extraction first, falls back to the vision model (Llama-4 Scout 17B via Groq) for scanned PDFs and image content |
+| POST   | `/attachments/extract`          | PDF/image → text. Tries text extraction first, falls back to a provider-aware vision model (Llama-4 Scout on Groq, Llama-3.2-Vision on OpenRouter, or local `llama3.2-vision` on Ollama) for scanned PDFs and image content. Returns the extracted text, method, and char count; a vision model that returns no text surfaces as a `503` rather than a silent empty result |
 
 ### Admin (`/admin/*`)
 
@@ -479,7 +513,7 @@ User management, knowledge base curation, and system stats. Gated by role:
 
 | Method | Path                            | Purpose                                                  |
 |--------|---------------------------------|----------------------------------------------------------|
-| GET    | `/health`                       | Public health check. Returns `{status, version, provider, llm_model, embedding_model, voice_enabled, tts_backend}`. Used by Docker healthchecks and ops monitoring |
+| GET    | `/health`                       | Public health check. Returns `{status, version, provider, model, embedding_model, voice_enabled, tts_backend}`. Used by Docker healthchecks and ops monitoring |
 | GET    | `/`                             | Public service root. Returns a self-description listing main endpoint paths — useful for discovering the API surface from a curl |
 
 ---
@@ -508,7 +542,7 @@ pip install pytest
 pytest
 ```
 
-Tests cover the calculator (including malicious-input rejection), schema validation, memory eviction, tool argument parsing, and authentication flows. They run in a few seconds and don't require external services.
+Tests cover the calculator (including malicious-input rejection), schema validation, memory eviction, tool argument parsing, the tool-call de-duplication logic, and authentication flows. They run in a few seconds and don't require external services.
 
 For RAG quality evaluation:
 
@@ -527,12 +561,15 @@ Outputs faithfulness, answer relevancy, context precision, and context recall.
 - **Weaviate over Chroma.** Multi-tenancy is a first-class feature in Weaviate — each user gets a logically isolated tenant under one collection, instead of one collection per user. Cleaner ops, better resource sharing, real hybrid search (BM25 + vector) built in.
 - **BGE-M3 over English-only embedding models.** A real differentiator for non-English use cases. The dimension cost (1024 vs 384) and the disk cost (~2.2GB vs ~130MB) is worth paying for cross-lingual retrieval that actually works on Urdu, Arabic, Hindi, Chinese, etc.
 - **Provider abstraction with contextvar-based user isolation.** Every tool that touches user data reads `get_current_user()` instead of receiving a `user_id` parameter. Tool signatures stay clean for the LLM, accidental cross-user leakage is impossible, and the agent loop is trivially auditable.
+- **Provider-aware vision, not a hardcoded model.** OCR routes to `active_vision_model`, which follows `LLM_PROVIDER` the same way the agent and ensemble models do. Switching providers repoints vision too — no separate config to keep in sync. Inputs are normalized to PNG first so formats like webp/gif work on every backend.
 - **PostgreSQL + Alembic + fastapi-users.** Real multi-tenant data needs real relational guarantees and migration tooling. fastapi-users handles auth on top of SQLAlchemy and does the boring parts well, including OAuth account linking.
 - **httpOnly cookies for browser, Bearer JWT for CLI.** Two transports, same JWT strategy. Browser clients are XSS-resistant; API clients still work with `Authorization` headers.
 - **Custom JWT strategy with `iat` claim.** fastapi-users' default JWT doesn't include `iat`. We override `JWTStrategy.write_token` to add it so the freshness check (against `jwt_invalidated_at`) has a referent. Same security guarantees as the default, plus immediate revocation.
 - **Force-logout enforced globally, not just on /admin.** First implementation gated only admin routes — meaning regular users could keep chatting after being force-logged-out. Fix: `current_active_user` itself runs the freshness check, so every authenticated endpoint enforces it.
 - **Account suspension override at the `UserManager.authenticate` level.** Wrong-password attempts return `None` (generic bad creds). Correct password + inactive raises a custom exception that the global handler turns into a 403 with a clear message. This means probing emails with wrong passwords reveals nothing; only someone with the actual password learns that an account is suspended. Acceptable security tradeoff: the legitimate user finds out exactly when they need to.
 - **Two separately-scoped retrieval tools.** `document_search` (personal-only) and `knowledge_base_search` (shared-only) deliberately do NOT overlap. A first design where both invoked the merged retrieval caused recursion loops because the agent oscillated between them. Lesson: when tools overlap semantically, LLMs thrash.
+- **Runtime tool-call de-duplication.** A node wrapping the tool executor caches identical (name, args) calls and blocks a second single-shot retrieval call within one turn. Capable models rarely trigger it; weak local models would otherwise loop on the same search and, on CPU, turn a 4-second answer into a multi-minute spiral.
+- **Language directive placed after history.** The response-language instruction is emitted for every language (including English) and injected as a system message *after* the conversation history, right before the user turn — so it outweighs the language of prior turns. This is what makes a mid-conversation switch actually take, even on weaker models.
 - **SSE over WebSockets.** Simpler. One-way streaming is all we need. FastAPI's `StreamingResponse` handles it natively.
 - **DuckDuckGo, not Google.** No API key. Trade-off is occasionally lower-quality results.
 - **The agent gets retrieval as tools, not a prompt prefix.** The LLM decides per-turn whether documents are relevant and which corpus to query, instead of blindly retrieving on every message.
@@ -546,7 +583,9 @@ Outputs faithfulness, answer relevancy, context precision, and context recall.
 I'd rather list these than have a recruiter find them:
 
 - **CSV analysis and Python REPL are temporarily disabled.** Small open-source models hallucinate filenames and forget to wrap results in `print()`. The tools are still in the repo but unregistered. Rebuilding in Phase 5 with a persistent Jupyter-style kernel and a larger tool-calling model.
-- **OpenRouter free tier is rate-limited.** Free-tier requests go into a low-priority queue at the upstream provider; under load they time out. The architecture works perfectly — switching `LLM_PROVIDER=openrouter` routes the entire app through OpenRouter — but for production demos, a $5–10 credit removes the queue.
+- **OpenRouter free tier is rate-limited.** Free-tier requests go into a low-priority queue upstream; under load, multi-LLM ensemble candidates, the judge, and vision OCR can time out or `503`. These now fail *cleanly* — clear error messages and graceful degradation to a best-candidate verdict — rather than crashing. The architecture is unchanged (`LLM_PROVIDER=openrouter` routes the whole app through OpenRouter), and a $5–10 credit removes the queue, making ensemble and vision reliable. In testing, all features (including vision OCR and a fully-judged ensemble) completed on the free tier when it wasn't throttled — just slower.
+- **Ollama is CPU-bound on machines without a GPU.** Chat works; the multi-step agent and vision OCR are slow enough to be impractical on CPU-only hardware (a small model answers quickly but produces weak tool-calling; a larger, smarter model is accurate but can take minutes per turn). The tool-call de-duplication guard prevents weak models from spiraling, but raw generation speed is still hardware-limited. Use Groq or OpenRouter for agent-heavy or vision workloads; keep Ollama for local, private chat.
+- **Strict language switching is prompt-enforced, not guaranteed.** The directive is sent every turn and placed last so it overrides conversation history. On capable models (Groq, paid OpenRouter) the selected language is honored reliably; on the weakest models it's greatly improved but can occasionally drift. A deterministic post-generation translate pass would close the gap entirely but isn't implemented — it wasn't needed for the primary path.
 - **No prompt-injection defense.** A malicious document or attachment could try to manipulate the agent. Production deployments in regulated industries would want a content classifier on uploaded files.
 - **LLM-as-judge bias in the ensemble.** The judge is biased toward verbose/confident answers. Mitigated by mixing model families but not eliminated.
 - **No request-level rate limiting yet.** A heavy user could in theory hammer the chat/RAG endpoints. Production would add Redis-backed per-user rate limits.
@@ -560,11 +599,13 @@ I'd rather list these than have a recruiter find them:
 A few things tutorials don't cover:
 
 - **Multi-tenant isolation is easier with a contextvar than with explicit parameters.** Threading `user_id` through every LangChain call site is painful and error-prone. Setting it once in the agent entry point and reading it from `get_current_user()` in tools is small, auditable, and impossible to forget at the route layer.
-- **Tool selection is a system-prompt problem, not a model problem.** Most "the agent picked the wrong tool" issues went away after rewriting tool descriptions to emphasize *when* to use each one, not just *what* it does.
-- **Tool semantic overlap causes recursion loops.** Two tools that retrieve from overlapping data sources make the agent thrash — it tries one, gets a hit, tries the other "to be sure," reformulates, retries. The fix isn't a higher recursion cap; it's making tool boundaries genuinely distinct so the agent doesn't see a choice where there shouldn't be one.
+- **Tool selection is a system-prompt problem, not a model problem.** Most "the agent picked the wrong tool" issues went away after rewriting tool descriptions to emphasize *when* to use each one, not just *what* it does. The same was true on the attachment path — the agent searched for a file whose text was already inline until the prompt explicitly said "answer from this content, don't look it up."
+- **Tool semantic overlap causes recursion loops.** Two tools that retrieve from overlapping data sources make the agent thrash — it tries one, gets a hit, tries the other "to be sure," reformulates, retries. The fix isn't a higher recursion cap; it's making tool boundaries genuinely distinct (and adding a runtime dedup guard) so the agent doesn't see a choice where there shouldn't be one.
+- **A "no-op" default can be a bug.** The response-language directive returned an empty string for English, on the assumption English needed no instruction. That silently broke mid-conversation switches *back* to English: with no directive, the model followed the language of the recent conversation history and kept replying in the previous language. Emitting an explicit English directive — and placing the language instruction *after* the history, as the last thing the model reads — made switches stick, even on weaker models. Position in the prompt is leverage.
+- **Instrument before theorizing.** A persistent "I can't see the file" bug was chased through three wrong hypotheses (bad model name, webp-only failure, the frontend dropping text) before adding logging proved OCR had been working the whole time and the agent simply wasn't reading the extracted text. Reading logs beats reasoning from priors.
 - **Streaming UX is the difference between "demo" and "product."** Users tolerate latency if they can see something happening. The live trace timeline shipped before any actual perf work, and it changed how the system felt.
 - **Multi-LLM ensembling produces visibly better answers on judgment questions, not factual ones.** For "what year was X invented" three models give the same answer. For "should I hire a senior or two juniors with limited runway" they disagree productively — and a smaller model from a different family caught a budget constraint that two bigger Llamas missed. The judge picked it. That's the moment the architecture earned its compute.
-- **Defensive tool schemas catch real production bugs.** Groq's strict schema validation rejects LLM-quoted numeric arguments (`amount: "2100000"` when schema declares `float`). Adding `value: float | int | str` plus a coercion block in `calculator`, `currency_converter`, and `unit_converter` fixed a class of intermittent failures.
+- **Defensive tool schemas catch real production bugs.** Groq's strict schema validation rejects LLM-quoted numeric arguments (`amount: "2100000"` when schema declares `float`). Adding `value: float | int | str` plus a coercion block in `calculator`, `currency_converter`, and `unit_converter` fixed a class of intermittent failures. The same defensive instinct applied to ensemble: free-tier providers sometimes return a response with no `choices`, which threw a cryptic `'NoneType' object is not subscriptable` until a guard turned it into a clean, informative error.
 - **Security defaults like "force-logout on /admin" are decorative if they don't apply everywhere.** First implementation of force-logout only ran the freshness check on admin routes. Regular users could keep chatting indefinitely after being force-logged-out. Defense-in-depth: every authenticated endpoint runs the check, or none of them do.
 - **Embedding dimensions lock collections.** Swapping `bge-small-en-v1.5` (384-dim) for `bge-m3` (1024-dim) requires dropping every collection. Discovered this when adding multilingual support — a config change that *seemed* trivial turned out to require a data migration. Lesson: embedding model is part of the storage contract, not the application config.
 - **Two SQLAlchemy engines are sometimes necessary.** A connection pool can't safely span event loops in asyncpg. The main FastAPI loop and the background titler loop each need their own.
@@ -583,7 +624,8 @@ What's next, ordered by priority:
 5. **Ragas-based eval harness in CI.** Measure retrieval quality on every change to the RAG pipeline.
 6. **Prompt-injection content classifier.** Run uploaded documents through a safety check before they enter the agent context. Critical for any regulated-industry deployment.
 7. **Per-tenant resource quotas.** Storage limits per user, message quotas per session.
-8. **Audit log surface in the admin panel.** Login attempts, role changes, suspensions, KB modifications — all already logged at the app level, just need surfacing in the UI.
+8. **Runtime provider & model switching from the admin panel.** Switch the active LLM provider, its agent model, and the vision model live from the admin UI (super_admin only), backed by a Postgres-stored config with a test-before-apply check — no `.env` edit or restart. Embedding model stays fixed (changing it requires re-indexing all vectors).
+9. **Audit log surface in the admin panel.** Login attempts, role changes, suspensions, KB modifications — all already logged at the app level, just need surfacing in the UI.
 
 ---
 

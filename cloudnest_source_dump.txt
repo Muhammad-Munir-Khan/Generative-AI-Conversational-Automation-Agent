@@ -773,7 +773,7 @@ def health():
         "status": "ok",
         "version": __version__,
         "provider": active_provider(),
-        "llm_model": active_model_name(),
+        "ollama_chat_model": active_model_name(),
         "embedding_model": settings.embedding_model,
         "voice_enabled": settings.enable_voice,
         "tts_backend": settings.tts_backend,

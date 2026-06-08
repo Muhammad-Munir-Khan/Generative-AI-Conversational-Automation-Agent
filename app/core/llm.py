@@ -20,7 +20,7 @@ def _build_ollama(temperature: float) -> BaseChatModel:
     from langchain_ollama import ChatOllama
 
     return ChatOllama(
-        model=settings.llm_model,
+        model=settings.ollama_chat_model,
         base_url=settings.ollama_base_url,
         temperature=temperature,
     )
@@ -41,7 +41,7 @@ def _build_groq(temperature: float) -> BaseChatModel:
         ) from e
 
     return ChatGroq(
-        model=settings.groq_model,
+        model=settings.groq_chat_model,
         api_key=settings.groq_api_key,
         temperature=temperature,
     )
@@ -75,7 +75,7 @@ def _build_openrouter(temperature: float) -> BaseChatModel:
         default_headers["X-Title"] = settings.openrouter_app_name
 
     return ChatOpenAI(
-        model=settings.openrouter_model,
+        model=settings.openrouter_chat_model,
         api_key=settings.openrouter_api_key,
         base_url=settings.openrouter_base_url,
         temperature=temperature,
@@ -93,13 +93,13 @@ def get_llm(temperature: float | None = None) -> BaseChatModel:
     provider = settings.llm_provider.lower()
 
     if provider == "groq":
-        log.info("using Groq provider with model=%s", settings.groq_model)
+        log.info("using Groq provider with model=%s", settings.groq_chat_model)
         return _build_groq(t)
     if provider == "ollama":
-        log.info("using Ollama provider with model=%s", settings.llm_model)
+        log.info("using Ollama provider with model=%s", settings.ollama_chat_model)
         return _build_ollama(t)
     if provider == "openrouter":
-        log.info("using OpenRouter provider with model=%s", settings.openrouter_model)
+        log.info("using OpenRouter provider with model=%s", settings.openrouter_chat_model)
         return _build_openrouter(t)
 
     raise ValueError(
@@ -112,10 +112,10 @@ def active_model_name() -> str:
     """Return the model identifier for whichever provider is active."""
     provider = settings.llm_provider.lower()
     if provider == "groq":
-        return settings.groq_model
+        return settings.groq_chat_model
     if provider == "openrouter":
-        return settings.openrouter_model
-    return settings.llm_model
+        return settings.openrouter_chat_model
+    return settings.ollama_chat_model
 
 
 def active_provider() -> str:

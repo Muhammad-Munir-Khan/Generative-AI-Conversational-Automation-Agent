@@ -1,15 +1,36 @@
-fix: repair summarizer crash and ensemble empty-verdict bug
+fix: repair agent streaming and voice transcript leak
 
-Two runtime bugs found during multilingual testing.
+Two unrelated bugs.
 
-ensemble: judge returned "(no verdict)" for some languages (e.g. Japanese)
-because the language directive made it translate JSON keys / drop the
-verdict. Now keeps keys in English with values in the target language,
-extracts the outermost {...} with a regex (replacing a buggy lstrip that
-could corrupt JSON), and falls back to the longest candidate when the
-verdict is empty.
+--- streaming (agent) ---
+/agent/stream threw "Token was created in a different Context" on every call,
+silently falling back to /agent/chat — so live token streaming and the tool
+trace timeline never actually ran.
 
-summarizer: document_summarizer crashed with AttributeError — it used the
-old Chroma `_collection.get()` API against the Weaviate store. Added a
-tenant-scoped fetch_all_for() helper to collections.py and switched the
-tool to use it.
+Cause: stream_agent is a sync generator pumped by StreamingResponse on
+threadpool threads. set_current_user() created a contextvar Token in one pump;
+reset_current_user(token) in the finally ran in a different context, which is
+invalid for token reset.
+
+Fix: capture the previous user with get_current_user(), set the new value, and
+restore the previous value in finally by setting it (context-safe) instead of
+resetting a token. run_agent is unchanged — it runs synchronously in one
+context, so its token-based reset is still correct.
+
+Verified: /agent/stream now returns 200 with no /agent/chat fallback across
+multiple turns; auto-title (end of the generator) runs, confirming clean
+completion through the finally.
+
+--- voice transcript leak (frontend) ---
+A transcription started in one chat appeared in the composer of a newly-opened
+chat. Two gaps combined: the transcribe handler had no idea the session had
+changed by the time it resolved, and the Composer's prefill effect only ever
+wrote text, never cleared it — so New Chat left the box populated.
+
+Fix:
+- page.tsx: capture the active session id when transcription starts
+  (sessionIdRef) and drop the result if the session changed before it resolved;
+  clear prefill on new chat and session switch.
+- Composer.tsx: change the prefill effect from `if (prefill) setText(prefill)`
+  to `setText(prefill ?? "")` so the textarea clears when prefill is reset.
+  Manual typing is unaffected (the effect only fires when prefill changes).

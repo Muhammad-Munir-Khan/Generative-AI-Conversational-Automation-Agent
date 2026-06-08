@@ -7,9 +7,11 @@ from fastapi.responses import Response
 
 from app.core.auth import current_active_user
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.core.schemas import TranscribeResponse, TTSRequest
 from app.models.user import User
 
+log = get_logger(__name__)
 router = APIRouter(prefix="/voice", tags=["voice"])
 
 ALLOWED_AUDIO_EXT = {".wav", ".mp3", ".m4a", ".ogg", ".webm", ".flac"}
@@ -43,6 +45,7 @@ async def transcribe(
         from app.voice.stt import transcribe_file
         result = transcribe_file(tmp_path)
     except Exception as e:
+        log.exception("transcription failed")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -54,11 +57,18 @@ async def transcribe(
 def tts(req: TTSRequest, user: User = Depends(current_active_user)):
     if not settings.enable_voice:
         raise HTTPException(status_code=503, detail="Voice features are disabled")
+    log.info(
+        "TTS request: backend=%s language=%s text_len=%d",
+        settings.tts_backend, req.language, len(req.text or ""),
+    )
     try:
         from app.voice.tts import get_media_type, synthesize
         audio_bytes = synthesize(req.text, language=req.language)
         media_type = get_media_type()
     except Exception as e:
+        # log.exception prints the FULL traceback to the server log, so we can
+        # see the real cause (Edge API failure, Piper voice download, etc.)
+        log.exception("TTS synthesis failed")
         raise HTTPException(status_code=500, detail=f"TTS failed: {e}")
 
     ext = "mp3" if media_type == "audio/mpeg" else "wav"
