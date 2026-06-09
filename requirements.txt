@@ -105,7 +105,7 @@ narwhals==2.20.0
 networkx==3.6.1
 numpy==2.4.4
 oauthlib==3.3.1
-ollama==0.6.1
+ollama==0.6.2
 onnxruntime==1.25.0
 openai==2.36.0
 openpyxl==3.1.5
