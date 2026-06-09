@@ -1,4 +1,5 @@
 """FastAPI application entry point."""
+import os
 from contextlib import asynccontextmanager
 
 import httpx
@@ -6,6 +7,9 @@ import jwt as pyjwt
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
+
+from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.rate_limit import RateLimiter
 from fastapi_users.jwt import decode_jwt
 from fastapi_users.router.oauth import generate_state_token
 from httpx_oauth.integrations.fastapi import OAuth2AuthorizeCallback
@@ -32,6 +36,33 @@ from app.models.user import User
 
 configure_logging()
 log = get_logger(__name__)
+
+
+# --- Error tracking (Sentry) --------------------------------------------------
+# No-op unless SENTRY_DSN is a real http(s):// URL, and a no-op if sentry-sdk
+# isn't installed. We validate the DSN scheme rather than just truthiness so a
+# blank, placeholder, or malformed value can NEVER crash startup (sentry_sdk
+# raises BadDsn on init for an invalid DSN). send_default_pii=False keeps user
+# emails / IPs out of error reports.
+_SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+if _SENTRY_DSN.startswith(("http://", "https://")):
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            environment=os.getenv("ENVIRONMENT", "development"),
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+            send_default_pii=False,
+        )
+        log.info("Sentry error tracking enabled (env=%s)", os.getenv("ENVIRONMENT", "development"))
+    except ImportError:
+        log.info("sentry-sdk not installed; error tracking disabled")
+    except Exception as e:
+        # Never let observability setup take down the app.
+        log.warning("Sentry init failed, continuing without it: %s", e)
+else:
+    log.info("SENTRY_DSN not set or not a URL; error tracking disabled")
 
 
 # --- Startup pre-warm ---------------------------------------------------------
@@ -75,15 +106,35 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# IMPORTANT: when allow_credentials=True, allow_origins cannot be ["*"].
-# Browsers will reject the response. List origins explicitly. See settings.cors_origins.
+# --- CORS --------------------------------------------------------------------
+# With allow_credentials=True, allow_origins CANNOT be ["*"] (browsers reject
+# it). We normalize whatever settings exposes into an explicit list, accepting
+# either the refactored `cors_origins_list` property or a comma-separated
+# `cors_origins` string (or a plain list), so this is robust to the config
+# shape. Lock this to your real frontend origin(s) in .env for production.
+_cors_origins = getattr(settings, "cors_origins_list", None)
+if _cors_origins is None:
+    _raw_origins = settings.cors_origins
+    if isinstance(_raw_origins, str):
+        _cors_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+    else:
+        _cors_origins = list(_raw_origins)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+    max_age=3600,  # cache preflight for an hour
 )
+
+# --- Security headers --------------------------------------------------------
+# Adds nosniff / frame-deny / referrer-policy / permissions-policy / HSTS / CSP
+# to every response. HSTS is harmless over plain HTTP and effective once TLS is
+# terminated in front of the app. See app/core/security_headers.py for the CSP
+# split that keeps the Swagger UI working.
+app.add_middleware(SecurityHeadersMiddleware, enable_hsts=True)
 
 
 # --- Exception handlers ------------------------------------------------------
@@ -110,10 +161,28 @@ async def _handle_account_suspended(request: Request, exc: AccountSuspendedError
 
 
 # --- Application routes ------------------------------------------------------
-app.include_router(rag_routes.router)
-app.include_router(agent_routes.router)
-app.include_router(voice_routes.router)
-app.include_router(attachment_routes.router)
+# Rate limits are attached per-router (IP-based via Redis; fail-open if Redis is
+# down). Limits are generous enough not to trip normal use — including the
+# frontend's session polling — but stop abuse. Tune the numbers as needed.
+# NOTE: keying is per-IP for now (router-level deps run before auth populates
+# the user); for per-user limits, attach RateLimiter as a route-level dependency
+# after current_active_user.
+app.include_router(
+    rag_routes.router,
+    dependencies=[Depends(RateLimiter(times=60, seconds=60, scope="rag"))],
+)
+app.include_router(
+    agent_routes.router,
+    dependencies=[Depends(RateLimiter(times=120, seconds=60, scope="agent"))],
+)
+app.include_router(
+    voice_routes.router,
+    dependencies=[Depends(RateLimiter(times=30, seconds=60, scope="voice"))],
+)
+app.include_router(
+    attachment_routes.router,
+    dependencies=[Depends(RateLimiter(times=30, seconds=60, scope="attachments"))],
+)
 app.include_router(admin_routes.router)
 # --- Auth routes -------------------------------------------------------------
 # Two login backends mounted under different prefixes:
@@ -121,20 +190,35 @@ app.include_router(admin_routes.router)
 #   POST /auth/cookie/login  -> sets httpOnly cookie, returns 204 No Content (for browser)
 #   POST /auth/jwt/logout    -> no-op (JWT is stateless)
 #   POST /auth/cookie/logout -> clears the cookie
+#
+# REQUIRE_EMAIL_VERIFICATION (env, default false): when true, both login
+# backends reject unverified accounts (400) until the user clicks the link in
+# their verification email. Left OFF by default so it doesn't lock out existing
+# users or break dev where SMTP isn't configured. Turn it ON for production
+# once SMTP works and the frontend has a /verify-email page. OAuth signups are
+# created verified, so they're unaffected.
+_REQUIRE_VERIFY = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() in (
+    "1", "true", "yes",
+)
+# Brute-force protection: 10 auth attempts/min/IP (login + logout share the
+# router), 5 registrations/min/IP to curb signup spam.
 app.include_router(
-    fastapi_users.get_auth_router(jwt_backend),
+    fastapi_users.get_auth_router(jwt_backend, requires_verification=_REQUIRE_VERIFY),
     prefix="/auth/jwt",
     tags=["auth"],
+    dependencies=[Depends(RateLimiter(times=10, seconds=60, scope="auth"))],
 )
 app.include_router(
-    fastapi_users.get_auth_router(cookie_backend),
+    fastapi_users.get_auth_router(cookie_backend, requires_verification=_REQUIRE_VERIFY),
     prefix="/auth/cookie",
     tags=["auth"],
+    dependencies=[Depends(RateLimiter(times=10, seconds=60, scope="auth"))],
 )
 app.include_router(
     fastapi_users.get_register_router(UserRead, UserCreate),
     prefix="/auth",
     tags=["auth"],
+    dependencies=[Depends(RateLimiter(times=5, seconds=60, scope="register"))],
 )
 app.include_router(
     fastapi_users.get_reset_password_router(),
@@ -439,7 +523,7 @@ def health():
         "status": "ok",
         "version": __version__,
         "provider": active_provider(),
-        "ollama_chat_model": active_model_name(),
+        "model": active_model_name(),
         "embedding_model": settings.embedding_model,
         "voice_enabled": settings.enable_voice,
         "tts_backend": settings.tts_backend,

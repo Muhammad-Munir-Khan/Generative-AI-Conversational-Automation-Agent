@@ -6,12 +6,24 @@ from pydantic import field_validator
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
+# In production, secrets can be mounted as files at /run/secrets/<field_name>
+# (Docker / Kubernetes secrets). pydantic-settings reads them automatically when
+# the directory exists. Environment variables and .env still take PRECEDENCE,
+# so development is unchanged. We only point at the directory when it actually
+# exists, to avoid a noisy startup warning in dev where there are no file
+# secrets. To use it in production, mount a secret named after the (lowercase)
+# field, e.g. a Docker secret `jwt_secret` -> /run/secrets/jwt_secret feeds the
+# `jwt_secret` setting; likewise groq_api_key, openrouter_api_key,
+# smtp_password, langfuse_secret_key, database_url, and the oauth client secrets.
+_SECRETS_DIR = "/run/secrets" if Path("/run/secrets").is_dir() else None
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
-        case_sensitive=False
+        case_sensitive=False,
+        secrets_dir=_SECRETS_DIR,
     )
 
     data_dir: Path = PROJECT_ROOT / "data"
@@ -111,6 +123,13 @@ class Settings(BaseSettings):
     weaviate_url: str
     weaviate_grpc_port: int
     weaviate_index_name: str
+
+    REDIS_URL : str
+    COOKIE_SECURE :bool  # true in production (HTTPS)
+    REQUIRE_EMAIL_VERIFICATION :bool # true in production once SMTP works
+    SENTRY_DSN : str
+    ENVIRONMENT :str
+    SENTRY_TRACES_SAMPLE_RATE :float
 
     # Derived paths
     @property

@@ -23,6 +23,7 @@ A self-hostable, multi-tenant conversational AI platform built end-to-end. Combi
 - **Production-grade authentication & isolation.** JWT + httpOnly cookies (XSS-resistant). Bearer token also supported for CLI/API. OAuth via Google and GitHub. Postgres-backed user accounts. Per-user sessions, messages, documents, and Weaviate tenants. Two users on the same backend never see each other's data — enforced at the database, vector store, API, and agent-context layers.
 - **Global force-logout.** When an admin force-logs out a user, every active session dies on the next request — not just admin pages. Implemented via JWT iat-cutoff checks on every authenticated endpoint.
 - **Account suspension with email notifications.** Block flow auto-force-logs-out the user, sends a templated "account suspended" email with optional admin-provided reason. Unblock fires a restoration email. Suspended users attempting to log in with the correct password see a clear "account suspended" message (wrong-password attempts still get a generic error — no enumeration leak).
+- **Security hardening.** Redis-backed rate limiting (brute-force protection on login, abuse caps on chat/RAG/voice), strict security headers (CSP, HSTS, nosniff, frame-deny) on every response, magic-byte upload validation, and structured audit logging of every security-relevant event. Optional Sentry error tracking and opt-in email verification. See [Security & hardening](#security--hardening).
 - **Voice in / voice out.** faster-whisper for STT, Microsoft Edge neural voices for TTS. One-tap mic button. Matched native voices for 37 languages, with text normalization (markdown stripping, CJK/full-width punctuation handling) so non-Latin scripts synthesize cleanly.
 - **Vision for images and scanned PDFs.** When text extraction falls short, a vision model reads the image directly — provider-aware: Llama-4 Scout 17B on Groq, Llama-3.2-11B-Vision on OpenRouter, or a local `llama3.2-vision` on Ollama. The vision model follows the active provider automatically; webp/gif inputs are normalized to PNG so every provider accepts them. No manual workflow.
 - **Built-in observability.** Langfuse hooks wired into the agent loop. Every run captures tool calls, latencies, token usage, costs. Filter by user, replay tool trees for any failed answer.
@@ -46,6 +47,24 @@ One `.env` line (`LLM_PROVIDER`) routes the entire app — agent, RAG, ensemble,
 | Tool-call loop protection | Rarely needed | Rarely needed | Dedup guard prevents weak-model loops |
 
 **Groq is the recommended demo/primary path** — the entire feature set runs fast. **OpenRouter** unlocks ~100 commercial models and works end to end; on the free tier, ensemble and vision are intermittent because free requests hit a low-priority upstream queue, and a small credit removes that. **Ollama** gives fully local, no-API-key inference; it's solid for chat on modest hardware, but the multi-step agent and vision OCR are slow on CPU-only machines. A tool-call de-duplication guard keeps weak local models from spiraling into repeated identical tool calls.
+
+---
+
+## Security & hardening
+
+Security controls applied across the stack. Everything below is **live in the running app** unless explicitly marked production-only.
+
+- **Rate limiting (Redis-backed).** Per-endpoint limits keyed by client IP: auth 10/min (login brute-force protection), registration 5/min, RAG 60/min, agent 120/min, voice 30/min, attachments 30/min. Fails open if Redis is briefly unavailable, so a cache blip never takes the app down.
+- **Security headers on every response.** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security`, and a strict `Content-Security-Policy` (relaxed only on the Swagger/redoc paths so the API explorer still renders).
+- **CORS locked to known origins.** Explicit origin allowlist with credentials, tightened methods and headers — no wildcard origins.
+- **Upload hardening.** Size cap (413 over 20MB), extension allowlist, and magic-byte signature checks so a file can't lie about its type — a spoofed `.pdf` or a mislabeled image is rejected before parsing, not after.
+- **Audit logging.** Every security-relevant event — login success/failure/blocked, registration, email verification, password reset, and admin actions (role change, suspend/unblock, force-logout, KB upload/delete) — emits a structured JSON line on a dedicated `audit` logger, ready to ship to a SIEM. Captures who did it and what it affected.
+- **Error tracking (Sentry).** Optional; enabled only when a valid `SENTRY_DSN` is set, and guarded so a blank or malformed DSN can never crash startup. PII is not sent.
+- **Email verification.** Verification-email plumbing wired through fastapi-users; enforcement is opt-in via `REQUIRE_EMAIL_VERIFICATION` (off by default so dev and existing accounts aren't disrupted). OAuth signups are verified automatically.
+- **Secrets.** In development, secrets come from `.env`. In production they can be mounted as files (Docker / Kubernetes secrets at `/run/secrets/<field_name>`); pydantic-settings reads them automatically, with environment variables still taking precedence — so the same code is convenient in dev and safe in prod.
+- **TLS — production overlay.** A Caddy reverse-proxy overlay (`docker/docker-compose.prod.yml` + `docker/Caddyfile`) terminates HTTPS with automatic Let's Encrypt certificates and stops the app/frontend from publishing ports directly. Development is unaffected.
+- **Dependency scanning (CI).** Dependabot plus a GitHub Actions workflow running `pip-audit`, `npm audit`, and Trivy on every push.
+- **Global force-logout & account suspension.** As described under the [admin panel](#admin-panel) — every authenticated endpoint enforces the JWT-freshness check.
 
 ---
 
@@ -164,7 +183,7 @@ A real user-management surface, not a settings page. Surfaced at `/admin` for us
 ```
 cloudnest/
 ├── app/                         # FastAPI backend
-│   ├── core/                    # config · logging · LLM provider · auth · email · DB · roles · admin_deps · language
+│   ├── core/                    # config · secrets · logging · LLM provider · auth · audit · email · DB · roles · admin_deps · language · security_headers · rate_limit
 │   ├── rag/
 │   │   ├── ingestion.py         # per-user document indexing
 │   │   ├── retrieval.py         # contextvar-scoped retrieval + retrieve_merged (personal + KB)
@@ -199,14 +218,17 @@ cloudnest/
 │   └── lib/                     # API client, types, theme hook, auth helpers
 │
 ├── docker/                      # Docker-compose stack + Dockerfiles + entrypoints
-│   ├── docker-compose.yml       # full stack: postgres, weaviate, api, frontend, ollama
+│   ├── docker-compose.yml       # full stack: postgres, redis, weaviate, api, frontend, ollama
+│   ├── docker-compose.prod.yml  # production overlay: Caddy auto-HTTPS, no public app ports
+│   ├── Caddyfile                # reverse proxy + automatic TLS (production)
 │   ├── Dockerfile.api
 │   ├── Dockerfile.frontend
 │   └── api-entrypoint.sh        # waits for DB, runs alembic upgrade head, then uvicorn
 │
 ├── scripts/                     # ingestion & testing utilities
-├── tests/                       # pytest test suite
+├── tests/                       # pytest test suite (incl. test_security.py)
 ├── evals/                       # Ragas RAG evaluation harness
+├── .github/                     # Dependabot config + security-scan CI workflow
 │
 ├── data/                        # used by local-dev path only; ignored in Docker
 ├── requirements.txt
@@ -267,6 +289,7 @@ First boot downloads BGE-M3 (~2.2GB) — visible in the api logs as `pre-warming
 
 Containers brought up:
 - `cloudnest-postgres` — Postgres 16 with user/session schema
+- `cloudnest-redis` — Redis, backs request rate limiting
 - `cloudnest-weaviate` — vector store, multi-tenant per-user
 - `cloudnest-api` — FastAPI backend, runs Alembic migrations on entrypoint
 - `cloudnest-frontend` — Next.js 15 frontend
@@ -370,6 +393,12 @@ Every tunable lives in `.env`. Env var names are uppercase; `LLM_PROVIDER` takes
 | `TTS_BACKEND`                       | `edge`                             | Voice engine: `edge` (neural online) or `piper` (offline)  |
 | `MAX_AGENT_ITERATIONS`              | `8`                                | Maximum tool-call loop iterations (recursion limit derived from this) |
 | `MEMORY_WINDOW`                     | `10`                               | Past message pairs kept in agent context                   |
+| `REDIS_URL`                         | `redis://redis:6379/0`             | Redis connection for request rate limiting                 |
+| `COOKIE_SECURE`                     | `false`                            | Set `true` in production (HTTPS) so the auth cookie is sent only over secure connections |
+| `REQUIRE_EMAIL_VERIFICATION`        | `false`                            | Set `true` to require a verified email before login (needs working SMTP) |
+| `SENTRY_DSN`                        | empty                              | Sentry error-tracking DSN; empty or non-URL disables it    |
+| `ENVIRONMENT`                       | `development`                      | Environment tag (used by Sentry and the production overlay)|
+| `SENTRY_TRACES_SAMPLE_RATE`         | `0.1`                              | Fraction of requests traced when Sentry is enabled         |
 
 See `.env.example` for the full reference with comments.
 
@@ -542,7 +571,7 @@ pip install pytest
 pytest
 ```
 
-Tests cover the calculator (including malicious-input rejection), schema validation, memory eviction, tool argument parsing, the tool-call de-duplication logic, and authentication flows. They run in a few seconds and don't require external services.
+Tests cover the calculator (including malicious-input rejection), schema validation, memory eviction, tool argument parsing, the tool-call de-duplication logic, authentication flows, and the security layer (upload signature sniffing, rate-limit keying, the Sentry DSN guard, the secrets loader, and security headers — see `tests/test_security.py`). They run in a few seconds and don't require external services.
 
 For RAG quality evaluation:
 
@@ -588,8 +617,7 @@ I'd rather list these than have a recruiter find them:
 - **Strict language switching is prompt-enforced, not guaranteed.** The directive is sent every turn and placed last so it overrides conversation history. On capable models (Groq, paid OpenRouter) the selected language is honored reliably; on the weakest models it's greatly improved but can occasionally drift. A deterministic post-generation translate pass would close the gap entirely but isn't implemented — it wasn't needed for the primary path.
 - **No prompt-injection defense.** A malicious document or attachment could try to manipulate the agent. Production deployments in regulated industries would want a content classifier on uploaded files.
 - **LLM-as-judge bias in the ensemble.** The judge is biased toward verbose/confident answers. Mitigated by mixing model families but not eliminated.
-- **No request-level rate limiting yet.** A heavy user could in theory hammer the chat/RAG endpoints. Production would add Redis-backed per-user rate limits.
-- **TLS, secrets management, and production deployment hardening.** Docker compose is great for development and pilots; production deployment to a real environment (kubernetes, managed Postgres, managed Weaviate, real secret store) is the next milestone.
+- **Managed production infrastructure is the next milestone.** TLS (a Caddy auto-HTTPS overlay), file-based secrets, security headers, CORS lockdown, Redis-backed rate limiting, audit logging, and dependency scanning are now in place. What remains for a fully hardened production deploy is managed Postgres and Weaviate, object storage for uploads, automated backups, and orchestration (Kubernetes) beyond docker-compose.
 - **No frontend in-flight kick on force-logout.** Force-logout is enforced server-side on the user's next request. If they're idle in the chat UI, the UI doesn't proactively boot them — the next click does. A WebSocket-pushed logout would close that gap but adds significant complexity.
 
 ---
@@ -615,17 +643,18 @@ A few things tutorials don't cover:
 
 ## Roadmap
 
+**Recently shipped — security & hardening:** Redis-backed rate limiting, security headers + CORS lockdown, magic-byte upload validation, structured audit logging (auth events *and* admin actions), optional Sentry error tracking, opt-in email verification, file-based secret support, a Caddy TLS overlay for production, and dependency scanning in CI. Details in [Security & hardening](#security--hardening).
+
 What's next, ordered by priority:
 
-1. **TLS + production deployment hardening.** Real secret store, managed Postgres, managed Weaviate. Kubernetes manifests as an alternative to docker-compose.
-2. **Per-user request rate limiting via Redis.** Currently no limits.
-3. **Rebuild `python_repl` and `csv_reader` with a persistent Jupyter-style kernel.** Faster (no subprocess boot per call), more reliable (state persists across calls), pair with a larger tool-calling model.
-4. **Langfuse dashboards for admin panel.** The traces are already captured; surface them in the UI for super_admins.
-5. **Ragas-based eval harness in CI.** Measure retrieval quality on every change to the RAG pipeline.
-6. **Prompt-injection content classifier.** Run uploaded documents through a safety check before they enter the agent context. Critical for any regulated-industry deployment.
-7. **Per-tenant resource quotas.** Storage limits per user, message quotas per session.
-8. **Runtime provider & model switching from the admin panel.** Switch the active LLM provider, its agent model, and the vision model live from the admin UI (super_admin only), backed by a Postgres-stored config with a test-before-apply check — no `.env` edit or restart. Embedding model stays fixed (changing it requires re-indexing all vectors).
-9. **Audit log surface in the admin panel.** Login attempts, role changes, suspensions, KB modifications — all already logged at the app level, just need surfacing in the UI.
+1. **Managed production infrastructure.** Managed Postgres and Weaviate, object storage for uploaded files, automated backups, and a CI/CD pipeline (test → build → scan → deploy). Kubernetes manifests as an alternative to docker-compose.
+2. **Rebuild `python_repl` and `csv_reader` with a persistent Jupyter-style kernel.** Faster (no subprocess boot per call), more reliable (state persists across calls), pair with a larger tool-calling model.
+3. **Langfuse dashboards for admin panel.** The traces are already captured; surface them in the UI for super_admins.
+4. **Ragas-based eval harness in CI.** Measure retrieval quality on every change to the RAG pipeline.
+5. **Prompt-injection content classifier.** Run uploaded documents through a safety check before they enter the agent context. Critical for any regulated-industry deployment.
+6. **Per-tenant resource quotas.** Storage limits per user, message quotas per session.
+7. **Runtime provider & model switching from the admin panel.** Switch the active LLM provider, its agent model, and the vision model live from the admin UI (super_admin only), backed by a Postgres-stored config with a test-before-apply check — no `.env` edit or restart. Embedding model stays fixed (changing it requires re-indexing all vectors).
+8. **Audit log surface in the admin panel.** The events are now emitted as structured logs (logins, role changes, suspensions, force-logouts, KB modifications); the remaining work is surfacing them in the UI for super_admins.
 
 ---
 

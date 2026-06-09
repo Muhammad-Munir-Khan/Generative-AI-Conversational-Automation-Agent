@@ -1,36 +1,52 @@
-fix: repair agent streaming and voice transcript leak
+docs+fix: multi-provider vision, strict i18n, ensemble robustness, config refactor
 
-Two unrelated bugs.
+README
+- Add tested provider support matrix (Groq full/fast, OpenRouter free-tier
+  intermittent, Ollama CPU-bound) instead of treating all three as equal
+- Document vision as provider-aware everywhere (was "via Groq" only)
+- Fix config table: uppercase env var names to match refactored .env,
+  add *_VISION_MODEL vars, split ensemble vars per-provider, document
+  ENSEMBLE_MAX_TOKENS / ENSEMBLE_TIMEOUT_SEC
+- Add strict response-language control as a feature; refresh limitations
+  and lessons (empty-English-directive bug, instrument-before-theorizing,
+  dedup guard, ensemble NoneType guard)
 
---- streaming (agent) ---
-/agent/stream threw "Token was created in a different Context" on every call,
-silently falling back to /agent/chat — so live token streaming and the tool
-trace timeline never actually ran.
+config
+- Rename fields for clarity (groq_chat_model, ollama_chat_model,
+  groq_ensemble_models, *_ensemble_judge_model, etc.) and update all
+  consumers (llm.py, graph.py, ensemble.py)
+- Add field_validator for LLM_PROVIDER; cors_origins as comma-string with
+  cors_origins_list property
+- Restore data_dir default, edge_tts_voice_by_lang map, and ensemble
+  max_tokens/timeout; drop dead chroma_dir (Weaviate, not Chroma)
 
-Cause: stream_agent is a sync generator pumped by StreamingResponse on
-threadpool threads. set_current_user() created a contextvar Token in one pump;
-reset_current_user(token) in the finally ran in a different context, which is
-invalid for token reset.
+vision / extraction
+- Provider-aware OCR via active_vision_model (Groq / OpenRouter / Ollama)
+- Normalize webp/gif to PNG so every provider accepts the input
+- Log model/bytes/char-count per call; raise on empty result (503) instead
+  of silently returning "" — turns a silent failure into a clear error
 
-Fix: capture the previous user with get_current_user(), set the new value, and
-restore the previous value in finally by setting it (context-safe) instead of
-resetting a token. run_agent is unchanged — it runs synchronously in one
-context, so its token-based reset is still correct.
+agent
+- Add DedupToolNode: cache identical tool calls, block repeat single-shot
+  retrieval within a turn — stops weak-model tool-call loops
+- Read attached-file text inline instead of calling document tools on the
+  filename (prompt + inline framing fix)
 
-Verified: /agent/stream now returns 200 with no /agent/chat fallback across
-multiple turns; auto-title (end of the generator) runs, confirming clean
-completion through the finally.
+i18n
+- Emit an explicit response-language directive for every language including
+  English (was empty, which broke mid-conversation switches back to English)
+- Reinforce the directive as a system message placed after history so the
+  selected language overrides prior turns, even on weaker models
 
---- voice transcript leak (frontend) ---
-A transcription started in one chat appeared in the composer of a newly-opened
-chat. Two gaps combined: the transcribe handler had no idea the session had
-changed by the time it resolved, and the Composer's prefill effect only ever
-wrote text, never cleared it — so New Chat left the box populated.
+tts
+- Clean text before synthesis (strip markdown, normalize CJK/full-width
+  punctuation) + one retry; fixes NoAudioReceived on zh/ja/ur
 
-Fix:
-- page.tsx: capture the active session id when transcription starts
-  (sessionIdRef) and drop the result if the session changed before it resolved;
-  clear prefill on new chat and session switch.
-- Composer.tsx: change the prefill effect from `if (prefill) setText(prefill)`
-  to `setText(prefill ?? "")` so the textarea clears when prefill is reset.
-  Manual typing is unaffected (the effect only fires when prefill changes).
+ensemble
+- Guard responses with no choices (free-tier providers) via _content_of —
+  clean error instead of "'NoneType' object is not subscriptable"
+- Robust judge JSON parse via regex extraction; factor _judge_fallback
+
+Tested across Groq (full feature set), OpenRouter (chat/agent/i18n/vision/
+ensemble; free-tier slower, degrades cleanly), and Ollama (chat; agent/
+vision CPU-bound).

@@ -200,3 +200,6 @@ xxhash==3.7.0
 yarl==1.23.0
 zipp==3.23.1
 zstandard==0.25.0
+sentry-sdk[fastapi]==2.20.0
+redis==5.2.1
+pip-audit==2.7.3

@@ -4,6 +4,16 @@ Beyond text extraction, the raw uploaded file is also saved into the user's
 per-user workspace folder (data/repl_workspace/<user_hex>/) so that the
 python_repl and csv_reader tools can find it by its original filename in
 subsequent agent turns.
+
+Upload hardening (Phase 1):
+  - Size cap enforced BEFORE extraction (413 instead of reading/parsing a huge
+    body).
+  - Extension allowlist — only the types the extractor actually supports.
+  - Magic-byte signature check for binary types (PDF/PNG/JPEG/WEBP/GIF) so a
+    file can't lie about its type via the extension. Text types (txt/md/csv/tsv)
+    are validated by attempting a UTF-8/latin-1 decode in the extractor.
+These run after auth and the empty-file check, so an unauthenticated or empty
+request is rejected first.
 """
 import shutil
 from pathlib import Path
@@ -19,6 +29,56 @@ from app.rag.extraction import extract_attachment
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/attachments", tags=["attachments"])
+
+# --- Upload validation policy --------------------------------------------------
+
+# 20 MB hard cap at the route (mirrors extraction.MAX_FILE_BYTES; enforced here
+# first so we reject before doing any work).
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
+# Only the types the extractor supports. Keep in sync with extraction.py.
+TEXT_EXTS = {".txt", ".md", ".csv", ".tsv"}
+BINARY_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
+ALLOWED_EXTS = TEXT_EXTS | BINARY_EXTS
+
+# Leading-byte signatures for the binary types we accept. A file whose bytes
+# don't match its claimed extension is rejected — defends against a .pdf that's
+# actually an executable, an image with a spoofed extension, etc.
+def _sniff_ok(ext: str, data: bytes) -> bool:
+    head = data[:16]
+    if ext == ".pdf":
+        return head.startswith(b"%PDF")
+    if ext == ".png":
+        return head.startswith(b"\x89PNG\r\n\x1a\n")
+    if ext in (".jpg", ".jpeg"):
+        return head.startswith(b"\xff\xd8\xff")
+    if ext == ".gif":
+        return head.startswith((b"GIF87a", b"GIF89a"))
+    if ext == ".webp":
+        # RIFF....WEBP
+        return head[:4] == b"RIFF" and head[8:12] == b"WEBP"
+    # Text types have no reliable signature; the extractor validates by decoding.
+    return True
+
+
+def _validate_upload(filename: str, data: bytes) -> None:
+    """Raise HTTPException if the upload violates size/type policy."""
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large: {len(data) / 1e6:.1f} MB (max {MAX_UPLOAD_BYTES / 1e6:.0f} MB)",
+        )
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext or '(none)'}'. Allowed: {sorted(ALLOWED_EXTS)}",
+        )
+    if ext in BINARY_EXTS and not _sniff_ok(ext, data):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File content does not match its '{ext}' extension (failed signature check).",
+        )
 
 
 class ExtractResponse(BaseModel):
@@ -92,6 +152,9 @@ async def extract(
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="empty file")
+
+    # Validate size + type + signature BEFORE doing any extraction work.
+    _validate_upload(file.filename, data)
 
     # Save raw file to the user's private workspace BEFORE extraction so that
     # tools can find it even if extraction later fails. Best-effort.

@@ -1,0 +1,49 @@
+# docker-compose.prod.yml — production overlay.
+#
+# Layers on top of docker-compose.yml. It:
+#   1. adds a Caddy reverse proxy that terminates TLS (automatic HTTPS),
+#   2. stops api/frontend from publishing ports publicly (Caddy is the only
+#      public entrypoint — they talk over the internal Docker network),
+#   3. flips production env flags (secure cookies, ENVIRONMENT=production).
+#
+# Dev is unchanged: plain `docker compose -f docker/docker-compose.yml up`
+# behaves exactly as before. Production:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+#
+# Before running in production: point your DNS A records for app.example.com
+# and api.example.com at this host, and edit the domains in docker/Caddyfile.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: cloudnest-caddy
+    restart: unless-stopped
+    depends_on:
+      - api
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # certificates + ACME account (persist!)
+      - caddy_config:/config
+
+  # Don't expose the API port publicly in prod; Caddy proxies to it internally.
+  api:
+    ports: !reset []
+    environment:
+      ENVIRONMENT: production
+      COOKIE_SECURE: "true"
+      # Frontend/backend public URLs as seen by the browser (HTTPS via Caddy).
+      BACKEND_URL: https://api.example.com
+      FRONTEND_URL: https://app.example.com
+
+  # Don't expose the frontend port publicly in prod; Caddy proxies to it.
+  frontend:
+    ports: !reset []
+
+volumes:
+  caddy_data:
+  caddy_config:

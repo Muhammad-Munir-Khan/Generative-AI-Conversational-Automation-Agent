@@ -21,6 +21,7 @@ Account suspension at login:
     return None (generic "bad credentials") so attackers can't probe whether
     a given email is suspended vs nonexistent.
 """
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -48,6 +49,7 @@ from httpx_oauth.clients.google import GoogleOAuth2
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.audit import audit_event
 from app.core.db import get_async_session
 from app.core.logging import get_logger
 from app.core.roles import UserRole
@@ -128,6 +130,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
             credentials.password, user.hashed_password
         )
         if not verified:
+            audit_event("login", actor=credentials.username, status="failure",
+                        reason="bad_password")
             return None
         if updated_password_hash is not None:
             await self.user_db.update(user, {"hashed_password": updated_password_hash})
@@ -136,13 +140,28 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         # specifically instead of letting the router return generic bad creds.
         if not user.is_active:
             log.info("blocked-user login attempt: %s", user.email)
+            audit_event("login", actor=user.email, status="blocked",
+                        reason="suspended")
             raise AccountSuspendedError(email=user.email)
 
         return user
 
     async def on_after_register(self, user: User, request=None):
         log.info("user registered: %s (%s)", user.email, user.id)
+        audit_event("register", actor=user.email, target=str(user.id))
         await self._sync_superuser_flag(user)
+        # Kick off email verification for password signups. Guarded so it's a
+        # no-op for already-verified users (OAuth signups set is_verified=True)
+        # and best-effort so a missing/broken SMTP config never fails the
+        # registration itself — the user is created either way and can request
+        # a fresh verification link later.
+        if not user.is_verified:
+            try:
+                await self.request_verify(user, request)
+            except Exception as e:
+                log.warning(
+                    "could not send verification email for %s: %s", user.email, e
+                )
 
     async def on_after_update(self, user: User, update_dict: dict, request=None):
         # If an admin changed the user's role, keep is_superuser consistent.
@@ -151,18 +170,45 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
     async def on_after_forgot_password(self, user: User, token: str, request=None):
         log.info("password reset requested for %s", user.email)
+        audit_event("password.forgot", actor=user.email)
         reset_link = f"{settings.frontend_url}/reset-password?token={token}"
         subject, html_body, text_body = password_reset_email(reset_link)
         await send_email(user.email, subject, html_body, text_body)
 
     async def on_after_request_verify(self, user: User, token: str, request=None):
         log.info("email verification requested for %s", user.email)
+        audit_event("verify.request", actor=user.email)
+        verify_link = f"{settings.frontend_url}/verify-email?token={token}"
+        subject = "Verify your CloudNest email"
+        html_body = (
+            "<p>Welcome to CloudNest! Please confirm your email address by "
+            f'clicking the link below:</p><p><a href="{verify_link}">Verify my '
+            "email</a></p><p>If you didn't create this account, you can ignore "
+            "this message.</p>"
+        )
+        text_body = (
+            "Welcome to CloudNest! Confirm your email address by opening this "
+            f"link:\n{verify_link}\n\nIf you didn't create this account, ignore "
+            "this message."
+        )
+        # Best-effort: don't let an SMTP failure bubble up and break the
+        # register/request-verify request.
+        try:
+            await send_email(user.email, subject, html_body, text_body)
+        except Exception as e:
+            log.warning("verification email send failed for %s: %s", user.email, e)
+
+    async def on_after_verify(self, user: User, request=None):
+        log.info("email verified for %s", user.email)
+        audit_event("verify.success", actor=user.email)
 
     async def on_after_login(self, user: User, request=None, response=None):
         log.info("user logged in: %s (%s)", user.email, user.id)
+        audit_event("login", actor=user.email, status="success")
 
     async def on_after_reset_password(self, user: User, request=None):
         log.info("password changed for %s", user.email)
+        audit_event("password.reset", actor=user.email)
         when = datetime.now(timezone.utc).strftime("%B %d, %Y at %H:%M UTC")
         subject, html_body, text_body = password_changed_email(when)
         await send_email(user.email, subject, html_body, text_body)
@@ -208,11 +254,20 @@ jwt_backend = AuthenticationBackend(
 
 # --- Backend 2: Cookie (web frontend) ---
 
+# Secure cookie flag, env-driven. Defaults to False for local http dev; set
+# COOKIE_SECURE=true in production (over HTTPS) so the cookie is only sent on
+# secure connections. NOTE: if the frontend and API are on DIFFERENT domains in
+# production, the browser won't send a SameSite=lax cookie on cross-site
+# requests — you'd need samesite="none" (which REQUIRES secure=True). Keep them
+# same-site (e.g. app.example.com + api.example.com share example.com) to stay
+# on the safer "lax".
+_COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes")
+
 cookie_transport = CookieTransport(
     cookie_name="genai_auth",
     cookie_max_age=settings.jwt_lifetime_seconds,
     cookie_httponly=True,
-    cookie_secure=False,  # TODO: True when deployed over HTTPS
+    cookie_secure=_COOKIE_SECURE,
     cookie_samesite="lax",
 )
 

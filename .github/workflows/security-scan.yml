@@ -1,0 +1,54 @@
+name: security-scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"   # weekly, Monday 06:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: Python dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pip-audit
+      # Report-only initially (|| true). Remove `|| true` to fail the build on
+      # any known vulnerability once the current backlog is clean.
+      - run: pip-audit -r requirements.txt --desc || true
+
+  npm-audit:
+    name: Frontend dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - working-directory: frontend
+        run: npm ci --ignore-scripts
+      - working-directory: frontend
+        run: npm audit --audit-level=high || true
+
+  trivy-fs:
+    name: Trivy filesystem scan (HIGH/CRITICAL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          # exit-code "0" = report-only. Set to "1" to gate the pipeline once
+          # the repo is clean of HIGH/CRITICAL findings.
+          exit-code: "0"

@@ -21,6 +21,23 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # --- Redis (rate limiting) ------------------------------------------------
+  # Backs app/core/rate_limit.py. No persistence needed — these are ephemeral
+  # request counters, so AOF/RDB are disabled to keep it lightweight.
+  redis:
+    image: redis:7-alpine
+    container_name: cloudnest-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
   # --- Ollama (local LLM) ---------------------------------------------------
   ollama:
     image: ollama/ollama:latest
@@ -90,6 +107,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       ollama:
         condition: service_healthy
       weaviate:
@@ -104,6 +123,7 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       WEAVIATE_URL: http://weaviate:8080
       WEAVIATE_GRPC_PORT: "50051"
+      REDIS_URL: redis://redis:6379/0
       BACKEND_URL: http://localhost:8000
       FRONTEND_URL: http://localhost:3000
       HF_HOME: /cache/huggingface

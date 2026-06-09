@@ -1,0 +1,45 @@
+# Caddyfile — automatic HTTPS reverse proxy for production.
+#
+# Caddy obtains and renews Let's Encrypt certificates automatically for the
+# domains below (just point DNS at the host first). It terminates TLS and
+# proxies to the internal frontend + API containers, which no longer need to
+# publish ports publicly (see docker-compose.prod.yml).
+#
+# Replace the two example domains with your real ones. For a quick local test
+# without real DNS, replace both site blocks with `:443` and Caddy will use a
+# self-signed internal cert (browser will warn — that's expected locally).
+#
+# Usage (production):
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+
+# --- Frontend (Next.js) -------------------------------------------------------
+app.example.com {
+	encode zstd gzip
+	reverse_proxy frontend:3000
+
+	# Edge security headers. The app sets its own too (defense in depth); these
+	# guarantee they're present even for static assets served by Next.
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# The frontend needs the mic for voice input, so microphone is allowed
+		# here (unlike the API, which has no mic surface).
+		Permissions-Policy "geolocation=(), microphone=(self), camera=()"
+		-Server
+	}
+}
+
+# --- API (FastAPI) ------------------------------------------------------------
+api.example.com {
+	encode zstd gzip
+	reverse_proxy api:8000
+
+	# Pass the real client IP through so the app's rate limiter keys correctly
+	# on X-Forwarded-For (Caddy sets this automatically, noted here for clarity).
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		-Server
+	}
+}

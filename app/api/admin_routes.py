@@ -19,6 +19,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.admin_deps import require_corpus_admin, require_super_admin
+from app.core.audit import audit_event
 from app.core.auth import get_user_manager
 from app.core.db import get_async_session
 from app.core.email import (
@@ -165,6 +166,7 @@ async def set_user_role(
             detail="You cannot change your own super_admin role.",
         )
 
+    old_role = getattr(user, "role", UserRole.user.value)
     is_super = req.role == UserRole.super_admin
     await session.execute(
         update(User)
@@ -172,6 +174,8 @@ async def set_user_role(
         .values(role=req.role.value, is_superuser=is_super)
     )
     await session.commit()
+    audit_event("user.role_change", actor=admin.email, target=user.email,
+                old_role=old_role, new_role=req.role.value)
 
     return AdminUserInfo(
         id=user.id,
@@ -232,6 +236,8 @@ async def set_user_active(
             "admin %s blocked %s (reason=%r)",
             admin.email, user.email, (req.reason or "").strip() or None,
         )
+        audit_event("user.suspend", actor=admin.email, target=user.email,
+                    reason=(req.reason or "").strip() or None)
         # Email asynchronously - never block the API on SMTP latency.
         subject, html_body, text_body = account_suspended_email(req.reason)
         background_tasks.add_task(
@@ -247,6 +253,7 @@ async def set_user_active(
         )
         await session.commit()
         log.info("admin %s unblocked %s", admin.email, user.email)
+        audit_event("user.unsuspend", actor=admin.email, target=user.email)
         subject, html_body, text_body = account_unsuspended_email()
         background_tasks.add_task(
             send_email, user.email, subject, html_body, text_body
@@ -283,6 +290,8 @@ async def edit_user_details(
         update(User).where(User.id == user_id).values(display_name=req.display_name)
     )
     await session.commit()
+    audit_event("user.edit", actor=admin.email, target=user.email,
+                display_name=req.display_name)
 
     return AdminUserInfo(
         id=user.id,
@@ -319,6 +328,7 @@ async def send_password_reset(
         raise HTTPException(status_code=500, detail=f"Could not send reset: {e}")
 
     log.info("admin %s sent password reset to %s", admin.email, user.email)
+    audit_event("user.send_reset", actor=admin.email, target=user.email)
     return {"status": "sent", "email": user.email}
 
 
@@ -353,6 +363,7 @@ async def force_logout(
     await session.commit()
 
     log.info("admin %s force-logged-out %s", admin.email, user.email)
+    audit_event("user.force_logout", actor=admin.email, target=user.email)
     return {"status": "ok", "email": user.email, "invalidated_at": now.isoformat()}
 
 
@@ -443,6 +454,7 @@ async def delete_user(
         )
 
     log.info("admin %s hard-deleted user %s (%s) from Postgres", admin.email, user_id, user_email)
+    audit_event("user.delete", actor=admin.email, target=user_email)
 
     # --- Step 2: Weaviate tenant cleanup (best-effort) ---
     # delete_user_collection already swallows + logs exceptions, so this won't
@@ -490,6 +502,7 @@ async def ingest_structured(
 
     total = global_corpus_count()
     log.info("admin %s ingested %d items into global corpus", admin.email, inserted)
+    audit_event("kb.ingest", actor=admin.email, items=inserted, total=total)
     return CorpusIngestResponse(
         inserted=inserted,
         total_in_corpus=total,
@@ -562,6 +575,7 @@ async def ingest_file(
 
     total = global_corpus_count()
     log.info("admin %s ingested %s (%d chunks)", admin.email, safe_name, inserted)
+    audit_event("kb.upload", actor=admin.email, target=safe_name, chunks=inserted)
     return CorpusIngestResponse(
         inserted=inserted,
         total_in_corpus=total,
@@ -627,6 +641,7 @@ async def delete_corpus_source(
         raise HTTPException(status_code=400, detail="source_title required")
     deleted = delete_by_source(source_title)
     log.info("admin %s deleted source %r (%d chunks)", admin.email, source_title, deleted)
+    audit_event("kb.delete", actor=admin.email, target=source_title, deleted=deleted)
     return {"source_title": source_title, "deleted": deleted}
 
 
